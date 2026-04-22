@@ -14,6 +14,6 @@ pub struct Cli {
 
 #[derive(Subcommand, Debug)]
 pub enum Commands {
-    /// Ping a name
-    Ping(commands::ping::PingArgs),
+    /// Create a mosaic from an image
+    Mosaic(commands::mosaic::MosaicArgs),
 }

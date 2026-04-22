@@ -10,7 +10,8 @@ fn main() -> pixelite::Result<()> {
     }
 
     match cli.command {
-        Commands::Ping(args) => commands::ping::run(args)?,
+        // convert image file to pixel art
+        Commands::Mosaic(args) => commands::mosaic::run(args)?,
     }
 
     Ok(())
