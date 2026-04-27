@@ -1,10 +1,17 @@
 use std::path::PathBuf;
 
-use clap::Args;
+use clap::{Args, ValueEnum};
 use image::{ImageFormat, open};
 
 use super::processing;
 use crate::Result;
+
+#[derive(ValueEnum, Clone, Debug, Default)]
+pub enum MosaicMode {
+    #[default]
+    Character,
+    Background,
+}
 
 /// The arguments of mosaic sub-command
 #[derive(Args, Debug)]
@@ -25,6 +32,10 @@ pub struct MosaicArgs {
     /// The maximum number of colors to use in the output image.
     #[arg(short, long, default_value_t = 16)]
     pub colors: u8,
+
+    /// The mode of pixel art generation.
+    #[arg(short = 'm', long, value_enum, default_value_t = MosaicMode::Character)]
+    pub mode: MosaicMode,
 }
 
 pub fn run(args: MosaicArgs) -> Result<()> {
