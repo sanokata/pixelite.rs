@@ -40,8 +40,12 @@ pub struct MosaicArgs {
 
 pub fn run(args: MosaicArgs) -> Result<()> {
     let img = open(&args.input)?;
+    // 1. resize the original image to the desired size
     let resized = processing::resize_to_max_long_side(img, args.size)?;
+    // 2. quantize the colors of the resized image to the desired number of colors
+    let quantized = processing::quantize_colors(resized, args.colors, args.mode)?;
+    // 3. save the quantized image to the output file
     let format = ImageFormat::from_path(&args.output).unwrap_or(ImageFormat::Png);
-    resized.save_with_format(&args.output, format)?;
+    quantized.save_with_format(&args.output, format)?;
     Ok(())
 }

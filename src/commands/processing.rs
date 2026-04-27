@@ -2,6 +2,7 @@ use image::imageops::FilterType;
 use image::{DynamicImage, GenericImageView};
 
 use crate::Result;
+use crate::commands::MosaicMode;
 
 /// Calculate the dimensions of the image after resizing according to max_long_side.
 fn calculate_dimensions(width: u32, height: u32, max_long_side: u32) -> (u32, u32) {
@@ -24,6 +25,17 @@ pub fn resize_to_max_long_side(img: DynamicImage, max_long_side: u32) -> Result<
     let (width, height) = img.dimensions();
     let (new_width, new_height) = calculate_dimensions(width, height, max_long_side);
     Ok(img.resize_exact(new_width, new_height, FilterType::Lanczos3))
+}
+
+/// Quantizes the colors of an image to the specified number of colors.
+/// If the mode is `Background`, dithering is used to represent smooth gradients.
+/// If the mode is `Character`, dithering is not used to keep clear edges.
+pub fn quantize_colors(img: DynamicImage, colors: u8, mode: MosaicMode) -> Result<DynamicImage> {
+    let dither = match mode {
+        MosaicMode::Background => true,
+        MosaicMode::Character => false,
+    };
+    Ok(img)
 }
 
 #[cfg(test)]
