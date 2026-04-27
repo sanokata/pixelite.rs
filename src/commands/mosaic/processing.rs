@@ -3,7 +3,7 @@ use image::imageops::FilterType;
 use image::{DynamicImage, GenericImageView};
 
 use crate::Result;
-use crate::commands::MosaicMode;
+use super::MosaicMode;
 
 /// Calculate the dimensions of the image after resizing according to max_long_side.
 fn calculate_dimensions(width: u32, height: u32, max_long_side: u32) -> (u32, u32) {
@@ -22,10 +22,18 @@ fn calculate_dimensions(width: u32, height: u32, max_long_side: u32) -> (u32, u3
 
 /// Resizes an image so that its longest side matches `max_long_side`,
 /// maintaining the aspect ratio.
-pub fn resize_to_max_long_side(img: DynamicImage, max_long_side: u32) -> Result<DynamicImage> {
+pub fn resize_to_max_long_side(
+    img: DynamicImage,
+    max_long_side: u32,
+    mode: &MosaicMode,
+) -> Result<DynamicImage> {
     let (width, height) = img.dimensions();
     let (new_width, new_height) = calculate_dimensions(width, height, max_long_side);
-    Ok(img.resize_exact(new_width, new_height, FilterType::Lanczos3))
+    let filter_type = match mode {
+        MosaicMode::Character => FilterType::Nearest,
+        MosaicMode::Background => FilterType::Lanczos3,
+    };
+    Ok(img.resize_exact(new_width, new_height, filter_type))
 }
 
 /// Quantizes the colors of an image to the specified number of colors.
@@ -92,14 +100,14 @@ mod tests {
     #[test]
     fn test_resize_to_max_long_side_landscape() {
         let img = DynamicImage::ImageRgba8(ImageBuffer::<Rgba<u8>, _>::new(200, 100));
-        let resized = resize_to_max_long_side(img, 50).unwrap();
+        let resized = resize_to_max_long_side(img, 50, &MosaicMode::Character).unwrap();
         assert_eq!(resized.dimensions(), (50, 25));
     }
 
     #[test]
     fn test_resize_to_max_long_side_portrait() {
         let img = DynamicImage::ImageRgba8(ImageBuffer::<Rgba<u8>, _>::new(100, 200));
-        let resized = resize_to_max_long_side(img, 50).unwrap();
+        let resized = resize_to_max_long_side(img, 50, &MosaicMode::Character).unwrap();
         assert_eq!(resized.dimensions(), (25, 50));
     }
 
@@ -116,7 +124,7 @@ mod tests {
         let result = quantize_colors(img, 2, MosaicMode::Character).unwrap();
         assert_eq!(result.dimensions(), (2, 2));
 
-        // check if the number of unique colors is less than or equal to 4
+        // check if the number of unique colors is less than or equal to 2
         let rgba = result.into_rgba8();
         let unique_colors: std::collections::HashSet<_> = rgba.pixels().map(|p| p.0).collect();
         assert!(unique_colors.len() <= 2);
