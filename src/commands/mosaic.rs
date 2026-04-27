@@ -1,7 +1,9 @@
 use std::path::PathBuf;
 
 use clap::Args;
+use image::{ImageFormat, open};
 
+use super::processing;
 use crate::Result;
 
 /// The arguments of mosaic sub-command
@@ -26,5 +28,9 @@ pub struct MosaicArgs {
 }
 
 pub fn run(args: MosaicArgs) -> Result<()> {
+    let img = open(&args.input)?;
+    let resized = processing::resize_to_max_long_side(img, args.size)?;
+    let format = ImageFormat::from_path(&args.output).unwrap_or(ImageFormat::Png);
+    resized.save_with_format(&args.output, format)?;
     Ok(())
 }
