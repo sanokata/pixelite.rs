@@ -1,3 +1,4 @@
+use exoquant::{Color, convert_to_indexed, ditherer, optimizer};
 use image::imageops::FilterType;
 use image::{DynamicImage, GenericImageView};
 
@@ -16,7 +17,7 @@ fn calculate_dimensions(width: u32, height: u32, max_long_side: u32) -> (u32, u3
         new_height = max_long_side;
         new_width = (width as f32 * (max_long_side as f32 / height as f32)).round() as u32;
     }
-    return (new_width, new_height);
+    (new_width, new_height)
 }
 
 /// Resizes an image so that its longest side matches `max_long_side`,
@@ -31,11 +32,37 @@ pub fn resize_to_max_long_side(img: DynamicImage, max_long_side: u32) -> Result<
 /// If the mode is `Background`, dithering is used to represent smooth gradients.
 /// If the mode is `Character`, dithering is not used to keep clear edges.
 pub fn quantize_colors(img: DynamicImage, colors: u8, mode: MosaicMode) -> Result<DynamicImage> {
-    let dither = match mode {
-        MosaicMode::Background => true,
-        MosaicMode::Character => false,
+    let rgba_buffer = img.into_rgba8();
+    let (width, height) = rgba_buffer.dimensions();
+    let pixels: Vec<Color> = rgba_buffer
+        .chunks_exact(4)
+        .map(|c| Color::new(c[0], c[1], c[2], c[3]))
+        .collect();
+
+    // Quantize and optionally dither; Background uses Floyd-Steinberg for smooth gradients
+    let (palette, indexed_pixels) = match mode {
+        MosaicMode::Background => convert_to_indexed(
+            &pixels,
+            width as usize,
+            colors as usize,
+            &optimizer::KMeans,
+            &ditherer::FloydSteinberg::new(),
+        ),
+        MosaicMode::Character => convert_to_indexed(
+            &pixels,
+            width as usize,
+            colors as usize,
+            &optimizer::KMeans,
+            &ditherer::None,
+        ),
     };
-    Ok(img)
+
+    let quantized = image::ImageBuffer::from_fn(width, height, |x, y| {
+        let color = palette[indexed_pixels[(y * width + x) as usize] as usize];
+        image::Rgba([color.r, color.g, color.b, color.a])
+    });
+
+    Ok(DynamicImage::ImageRgba8(quantized))
 }
 
 #[cfg(test)]
@@ -74,5 +101,42 @@ mod tests {
         let img = DynamicImage::ImageRgba8(ImageBuffer::<Rgba<u8>, _>::new(100, 200));
         let resized = resize_to_max_long_side(img, 50).unwrap();
         assert_eq!(resized.dimensions(), (25, 50));
+    }
+
+    #[test]
+    fn test_quantize_colors_character_mode() {
+        let mut img_buf = ImageBuffer::new(2, 2);
+        img_buf.put_pixel(0, 0, Rgba([255, 0, 0, 255]));
+        img_buf.put_pixel(1, 0, Rgba([0, 255, 0, 255]));
+        img_buf.put_pixel(0, 1, Rgba([0, 0, 255, 255]));
+        img_buf.put_pixel(1, 1, Rgba([255, 255, 255, 255]));
+        let img = DynamicImage::ImageRgba8(img_buf);
+
+        // check if the dimensions are not changed
+        let result = quantize_colors(img, 2, MosaicMode::Character).unwrap();
+        assert_eq!(result.dimensions(), (2, 2));
+
+        // check if the number of unique colors is less than or equal to 4
+        let rgba = result.into_rgba8();
+        let unique_colors: std::collections::HashSet<_> = rgba.pixels().map(|p| p.0).collect();
+        assert!(unique_colors.len() <= 2);
+    }
+
+    #[test]
+    fn test_quantize_colors_background_mode() {
+        let mut img_buf = ImageBuffer::new(4, 4);
+        for (x, y, pixel) in img_buf.enumerate_pixels_mut() {
+            *pixel = Rgba([(x * 60) as u8, (y * 60) as u8, 128, 255]);
+        }
+        let img = DynamicImage::ImageRgba8(img_buf);
+
+        // check if the dimensions are not changed
+        let result = quantize_colors(img, 4, MosaicMode::Background).unwrap();
+        assert_eq!(result.dimensions(), (4, 4));
+
+        // check if the number of unique colors is less than or equal to 4
+        let rgba = result.into_rgba8();
+        let unique_colors: std::collections::HashSet<_> = rgba.pixels().map(|p| p.0).collect();
+        assert!(unique_colors.len() <= 4);
     }
 }
