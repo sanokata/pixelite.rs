@@ -42,7 +42,43 @@ fn remove_orphan_pixels(img: DynamicImage) -> Result<DynamicImage> {
 }
 
 fn apply_pixel_perfection(img: DynamicImage) -> Result<DynamicImage> {
-    Ok(img)
+    let rgba = img.into_rgba8();
+    let (width, height) = rgba.dimensions();
+    let mut output = rgba.clone();
+
+    for y in 1..(height - 1) {
+        for x in 1..(width - 1) {
+            let p = rgba.get_pixel(x, y);
+
+            let Some([u, d, l, r, ul, ur, dl, dr]) = get_neighbors(&rgba, x, y) else {
+                continue;
+            };
+
+            let target_color = [
+                (l, u, r, d, ul), // Top-left L
+                (r, u, l, d, ur), // Top-right L
+                (l, d, r, u, dl), // Bottom-left L
+                (r, d, l, u, dr), // Bottom-right L
+            ]
+            .into_iter()
+            .find_map(|(adj1, adj2, opp1, opp2, diag)| {
+                (adj1 == p && adj2 == p && opp1 != p && opp2 != p && diag != p).then(|| {
+                    if opp1 == opp2 {
+                        *opp1
+                    } else {
+                        let majority = find_majority_color(&rgba, x, y);
+                        if majority != *p { majority } else { *opp1 }
+                    }
+                })
+            });
+
+            if let Some(c) = target_color {
+                output.put_pixel(x, y, c);
+            }
+        }
+    }
+
+    Ok(DynamicImage::ImageRgba8(output))
 }
 
 fn add_outlines(img: DynamicImage) -> Result<DynamicImage> {
@@ -101,4 +137,25 @@ fn find_majority_color(img: &image::RgbaImage, x: u32, y: u32) -> Rgba<u8> {
         .max_by_key(|&(_, count)| count)
         .map(|(c, _)| c)
         .unwrap_or_else(|| *img.get_pixel(x, y))
+}
+
+/// Retrieves references to the 8 neighboring pixels around the specified (x, y) coordinate.
+/// Returns `None` if the coordinate is on the edge of the image and does not have all 8 neighbors.
+#[inline]
+fn get_neighbors(img: &image::RgbaImage, x: u32, y: u32) -> Option<[&Rgba<u8>; 8]> {
+    let (width, height) = img.dimensions();
+    if x == 0 || y == 0 || x >= width - 1 || y >= height - 1 {
+        return None;
+    }
+
+    Some([
+        img.get_pixel(x, y - 1),     // u
+        img.get_pixel(x, y + 1),     // d
+        img.get_pixel(x - 1, y),     // l
+        img.get_pixel(x + 1, y),     // r
+        img.get_pixel(x - 1, y - 1), // ul
+        img.get_pixel(x + 1, y - 1), // ur
+        img.get_pixel(x - 1, y + 1), // dl
+        img.get_pixel(x + 1, y + 1), // dr
+    ])
 }
