@@ -12,8 +12,8 @@ use crate::Result;
 #[derive(ValueEnum, Clone, Debug, Default)]
 pub enum MosaicMode {
     #[default]
-    Character,
-    Background,
+    Sharp,
+    Smooth,
 }
 
 /// The arguments of mosaic sub-command
@@ -37,32 +37,34 @@ pub struct MosaicArgs {
     pub colors: u8,
 
     /// The mode of pixel art generation.
-    #[arg(short = 'm', long, value_enum, default_value_t = MosaicMode::Character)]
+    #[arg(short = 'm', long, value_enum, default_value_t = MosaicMode::Sharp)]
     pub mode: MosaicMode,
 
     /// Whether to crop the input image to a square centered on the middle before processing.
     #[arg(long, default_value_t = false)]
     pub crop: bool,
+
+    /// The output scale factor (e.g., 4 results in 4x4 physical pixels per dot).
+    #[arg(short = 'S', long, default_value_t = 1)]
+    pub scale: u32,
 }
 
 pub fn run(args: MosaicArgs) -> Result<()> {
     let img = open(&args.input)?;
     // 0. preprocess: noise reduction / alpha normalization per mode
     let preprocessed = preprocessing::preprocess(img, &args.mode)?;
-    // 0.5 crop if requested
-    let prepared = if args.crop {
-        processing::crop_to_square(preprocessed)
-    } else {
-        preprocessed
-    };
-    // 1. resize the original image to the desired size
+    // 1. crop if requested
+    let prepared = preprocessing::crop_to_square(preprocessed, args.crop);
+    // 2. resize the original image to the desired size
     let resized = processing::resize_to_max_long_side(prepared, args.size, &args.mode)?;
-    // 2. quantize the colors of the resized image to the desired number of colors
+    // 3. quantize the colors of the resized image to the desired number of colors
     let quantized = processing::quantize_colors(resized, args.colors, args.mode.clone())?;
-    // 3. postprocess the quantized image
+    // 4. postprocess the quantized image
     let postprocessed = postprocessing::postprocess(quantized, &args.mode)?;
-    // 4. save the postprocessed image to the output file
+    // 5. upscale the result if requested
+    let final_image = postprocessing::upscale(postprocessed, args.scale);
+    // 6. save the postprocessed image to the output file
     let format = ImageFormat::from_path(&args.output).unwrap_or(ImageFormat::Png);
-    postprocessed.save_with_format(&args.output, format)?;
+    final_image.save_with_format(&args.output, format)?;
     Ok(())
 }

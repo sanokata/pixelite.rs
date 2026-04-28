@@ -11,18 +11,30 @@ use super::MosaicMode;
 /// such as removing isolated pixels or fixing staircase patterns.
 pub fn postprocess(img: DynamicImage, mode: &MosaicMode) -> Result<DynamicImage> {
     match mode {
-        MosaicMode::Character => {
+        MosaicMode::Sharp => {
             let img = remove_orphan_pixels(img)?;
             let img = apply_pixel_perfection(img)?;
             let img = add_outlines(img)?;
             let img = remove_anti_aliasing(img)?;
             Ok(img)
         }
-        MosaicMode::Background => {
+        MosaicMode::Smooth => {
             let img = remove_anti_aliasing(img)?;
             Ok(img)
         }
     }
+}
+
+/// Upscales the image by a given factor using the Nearest Neighbor filter to preserve pixel edges.
+pub fn upscale(img: DynamicImage, factor: u32) -> DynamicImage {
+    if factor <= 1 {
+        return img;
+    }
+    img.resize(
+        img.width() * factor,
+        img.height() * factor,
+        image::imageops::FilterType::Nearest,
+    )
 }
 
 /// Removes isolated "orphan" pixels by replacing them with the majority color of their neighbors.
@@ -73,7 +85,7 @@ fn apply_pixel_perfection(img: DynamicImage) -> Result<DynamicImage> {
 }
 
 /// Adds a 1-pixel black outline to any opaque pixel that is adjacent to a transparent area.
-/// This is specifically used in Character mode to make the character stand out.
+/// This is specifically used in Sharp mode to make the shape stand out.
 fn add_outlines(img: DynamicImage) -> Result<DynamicImage> {
     let rgba = img.into_rgba8();
     let (width, height) = rgba.dimensions();
@@ -239,6 +251,24 @@ mod tests {
         let result = remove_orphan_pixels(img).unwrap().into_rgba8();
         // The middle black pixel should be replaced by white
         assert_eq!(result.get_pixel(1, 1).0, white);
+    }
+
+    #[test]
+    fn test_upscale_preserves_sharp_edges() {
+        let white = [255, 255, 255, 255];
+        let black = [0, 0, 0, 255];
+        let img = create_test_img(vec![vec![white, black], vec![black, white]]);
+
+        // Scale by 2x
+        let result = upscale(img, 2).into_rgba8();
+
+        assert_eq!(result.dimensions(), (4, 4));
+        // Check top-left 2x2 block (should be all white)
+        assert_eq!(result.get_pixel(0, 0).0, white);
+        assert_eq!(result.get_pixel(1, 1).0, white);
+        // Check top-right 2x2 block (should be all black)
+        assert_eq!(result.get_pixel(2, 0).0, black);
+        assert_eq!(result.get_pixel(3, 1).0, black);
     }
 
     #[test]

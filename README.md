@@ -11,8 +11,8 @@ It provides optimized image processing pipelines for various use cases, such as 
 ## Features
 
 - **Two Processing Modes**:
-  - `Character`: Designed to keep outlines sharp and handle transparency correctly. Applies post-processing such as orphan pixel removal, L-shape correction (pixel perfection), and outlining.
-  - `Background`: Designed to maintain smooth gradients. Performs natural color reduction using dithering and Gaussian blur.
+  - `Sharp`: Designed to keep outlines sharp and handle transparency correctly. Applies post-processing such as orphan pixel removal, L-shape correction (pixel perfection), and outlining.
+  - `Smooth`: Designed to maintain smooth gradients. Performs natural color reduction using dithering and Gaussian blur.
 - **Smart Crop**: Automatically crops the center of the image into a square.
 - **Advanced Image Processing**: Optimal palette selection using the KMeans algorithm and luminance calculation based on Rec. 709 weights.
 
@@ -42,7 +42,7 @@ pixelite mosaic --input photo.jpg --output out.png --size 64
 
 ```bash
 # Crop the center to a square and apply character mode at 32x32 resolution
-pixelite mosaic -i input.png -o output.png -s 32 -m character --crop
+pixelite mosaic -i input.png -o output.png -s 32 -m sharp --crop
 ```
 
 ### Options
@@ -57,6 +57,7 @@ Run `pixelite mosaic --help` for more details.
 | `--colors` | `-c` | `16` | Maximum number of colors to use |
 | `--mode` | `-m` | `character` | Processing mode (`character` or `background`) |
 | `--crop` | | `false` | Whether to crop the center of the image into a square |
+| `--scale` | `-S` | `1` | Output scale factor (multiplies physical pixel size) |
 | `--verbose`| `-v` | `false` | Show detailed logs (global option) |
 
 ## Development

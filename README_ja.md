@@ -4,13 +4,13 @@
 [![AI Assisted](https://img.shields.io/badge/AI-Assisted-blue.svg)](#)
 
 `pixelite` は、画像をドット絵に変換するための Rust 製コマンドラインツールです。
-キャラクター向けのクリーンなエッジ処理や、背景向けの滑らかな減色処理など、用途に応じた最適な画像処理パイプラインを提供します。
+スプライト向けのクリーンなエッジ処理や、写真向けの滑らかな減色処理など、用途に応じた最適な画像処理パイプラインを提供します。
 
 ## 特徴
 
 - **2つの処理モード**:
-  - `Character`: 輪郭を鮮明に保ち、透過処理を適切に扱うためのモード。孤立点の除去や L 字補正、縁取りなどの後処理を適用します。
-  - `Background`: グラデーションを滑らかに保つためのモード。ディザリングやガウスぼかしを用いた自然な減色を行います。
+  - `Sharp`: 輪郭を鮮明に保ち、透過処理を適切に扱うためのモード。孤立点の除去や L 字補正、縁取りなどの後処理を適用します。
+  - `Smooth`: グラデーションを滑らかに保つためのモード。ディザリングやガウスぼかしを用いた自然な減色を行います。
 - **スマートクロップ**: 画像の中央を正方形に自動で切り抜く機能を搭載。
 - **高度な画像処理**: KMeans 法による最適なパレット選定と、Rec. 709 重み付けに基づいた輝度計算。
 
@@ -40,7 +40,7 @@ pixelite mosaic --input photo.jpg --output out.png --size 64
 
 ```bash
 # 中央を正方形にクロップし、32x32 でキャラクターモードを適用
-pixelite mosaic -i input.png -o output.png -s 32 -m character --crop
+pixelite mosaic -i input.png -o output.png -s 32 -m sharp --crop
 ```
 
 ### オプション一覧
@@ -55,6 +55,7 @@ pixelite mosaic -i input.png -o output.png -s 32 -m character --crop
 | `--colors` | `-c` | `16` | 使用する最大色数 |
 | `--mode` | `-m` | `character` | 処理モード (`character` または `background`) |
 | `--crop` | | `false` | 画像の中央を正方形にクロップするか |
+| `--scale` | `-S` | `1` | エクスポート倍率（1ドットあたりのピクセル数） |
 | `--verbose`| `-v` | `false` | 詳細なログを表示（グローバルオプション） |
 
 ## 開発

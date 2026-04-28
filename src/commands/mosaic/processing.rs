@@ -30,26 +30,15 @@ pub fn resize_to_max_long_side(
     let (width, height) = img.dimensions();
     let (new_width, new_height) = calculate_dimensions(width, height, max_long_side);
     let filter_type = match mode {
-        MosaicMode::Character => FilterType::Nearest,
-        MosaicMode::Background => FilterType::Lanczos3,
+        MosaicMode::Sharp => FilterType::Nearest,
+        MosaicMode::Smooth => FilterType::Lanczos3,
     };
     Ok(img.resize_exact(new_width, new_height, filter_type))
 }
 
-/// Crops the image to a centered square based on the shortest side.
-pub fn crop_to_square(mut img: DynamicImage) -> DynamicImage {
-    let (width, height) = img.dimensions();
-    let size = width.min(height);
-
-    let x = (width - size) / 2;
-    let y = (height - size) / 2;
-
-    img.crop(x, y, size, size)
-}
-
 /// Quantizes the colors of an image to the specified number of colors.
-/// If the mode is `Background`, dithering is used to represent smooth gradients.
-/// If the mode is `Character`, dithering is not used to keep clear edges.
+/// If the mode is `Smooth`, dithering is used to represent smooth gradients.
+/// If the mode is `Sharp`, dithering is not used to keep clear edges.
 pub fn quantize_colors(img: DynamicImage, colors: u8, mode: MosaicMode) -> Result<DynamicImage> {
     let rgba_buffer = img.into_rgba8();
     let (width, height) = rgba_buffer.dimensions();
@@ -58,16 +47,16 @@ pub fn quantize_colors(img: DynamicImage, colors: u8, mode: MosaicMode) -> Resul
         .map(|c| Color::new(c[0], c[1], c[2], c[3]))
         .collect();
 
-    // Quantize and optionally dither; Background uses Floyd-Steinberg for smooth gradients
+    // Quantize and optionally dither; Smooth uses Floyd-Steinberg for smooth gradients
     let (palette, indexed_pixels) = match mode {
-        MosaicMode::Background => convert_to_indexed(
+        MosaicMode::Smooth => convert_to_indexed(
             &pixels,
             width as usize,
             colors as usize,
             &optimizer::KMeans,
             &ditherer::FloydSteinberg::new(),
         ),
-        MosaicMode::Character => convert_to_indexed(
+        MosaicMode::Sharp => convert_to_indexed(
             &pixels,
             width as usize,
             colors as usize,
@@ -111,19 +100,19 @@ mod tests {
     #[test]
     fn test_resize_to_max_long_side_landscape() {
         let img = DynamicImage::ImageRgba8(ImageBuffer::<Rgba<u8>, _>::new(200, 100));
-        let resized = resize_to_max_long_side(img, 50, &MosaicMode::Character).unwrap();
+        let resized = resize_to_max_long_side(img, 50, &MosaicMode::Sharp).unwrap();
         assert_eq!(resized.dimensions(), (50, 25));
     }
 
     #[test]
     fn test_resize_to_max_long_side_portrait() {
         let img = DynamicImage::ImageRgba8(ImageBuffer::<Rgba<u8>, _>::new(100, 200));
-        let resized = resize_to_max_long_side(img, 50, &MosaicMode::Character).unwrap();
+        let resized = resize_to_max_long_side(img, 50, &MosaicMode::Sharp).unwrap();
         assert_eq!(resized.dimensions(), (25, 50));
     }
 
     #[test]
-    fn test_quantize_colors_character_mode() {
+    fn test_quantize_colors_sharp_mode() {
         let mut img_buf = ImageBuffer::new(2, 2);
         img_buf.put_pixel(0, 0, Rgba([255, 0, 0, 255]));
         img_buf.put_pixel(1, 0, Rgba([0, 255, 0, 255]));
@@ -132,7 +121,7 @@ mod tests {
         let img = DynamicImage::ImageRgba8(img_buf);
 
         // check if the dimensions are not changed
-        let result = quantize_colors(img, 2, MosaicMode::Character).unwrap();
+        let result = quantize_colors(img, 2, MosaicMode::Sharp).unwrap();
         assert_eq!(result.dimensions(), (2, 2));
 
         // check if the number of unique colors is less than or equal to 2
@@ -142,7 +131,7 @@ mod tests {
     }
 
     #[test]
-    fn test_quantize_colors_background_mode() {
+    fn test_quantize_colors_smooth_mode() {
         let mut img_buf = ImageBuffer::new(4, 4);
         for (x, y, pixel) in img_buf.enumerate_pixels_mut() {
             *pixel = Rgba([(x * 60) as u8, (y * 60) as u8, 128, 255]);
@@ -150,26 +139,12 @@ mod tests {
         let img = DynamicImage::ImageRgba8(img_buf);
 
         // check if the dimensions are not changed
-        let result = quantize_colors(img, 4, MosaicMode::Background).unwrap();
+        let result = quantize_colors(img, 4, MosaicMode::Smooth).unwrap();
         assert_eq!(result.dimensions(), (4, 4));
 
         // check if the number of unique colors is less than or equal to 4
         let rgba = result.into_rgba8();
         let unique_colors: std::collections::HashSet<_> = rgba.pixels().map(|p| p.0).collect();
         assert!(unique_colors.len() <= 4);
-    }
-
-    #[test]
-    fn test_crop_to_square_landscape() {
-        let img = DynamicImage::ImageRgba8(ImageBuffer::<Rgba<u8>, _>::new(200, 100));
-        let cropped = crop_to_square(img);
-        assert_eq!(cropped.dimensions(), (100, 100));
-    }
-
-    #[test]
-    fn test_crop_to_square_portrait() {
-        let img = DynamicImage::ImageRgba8(ImageBuffer::<Rgba<u8>, _>::new(100, 200));
-        let cropped = crop_to_square(img);
-        assert_eq!(cropped.dimensions(), (100, 100));
     }
 }

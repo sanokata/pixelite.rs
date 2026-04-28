@@ -7,35 +7,49 @@ use libblur::{
 use super::MosaicMode;
 use crate::Result;
 
-/// Gaussian blur sigma applied during Background mode noise reduction.
-const BACKGROUND_BLUR_SIGMA: f32 = 1.0;
-/// Saturation scale factor for Background mode (values < 1.0 reduce saturation).
-const BACKGROUND_SATURATION_FACTOR: f32 = 0.85;
+/// Gaussian blur sigma applied during Smooth mode noise reduction.
+const SMOOTH_BLUR_SIGMA: f32 = 1.0;
+/// Saturation scale factor for Smooth mode (values < 1.0 reduce saturation).
+const SMOOTH_SATURATION_FACTOR: f32 = 0.85;
 
 /// Applies mode-appropriate preprocessing to the image before resizing and quantization.
 ///
-/// - `Character`: Binarizes the alpha channel (0 or 255) to preserve hard edges.
-/// - `Background`: Applies a gentle Gaussian blur to reduce noise and smooth gradients,
+/// - `Sharp`: Binarizes the alpha channel (0 or 255) to preserve hard edges.
+/// - `Smooth`: Applies a gentle Gaussian blur to reduce noise and smooth gradients,
 ///   then lowers saturation slightly for more natural palette reduction.
 pub fn preprocess(img: DynamicImage, mode: &MosaicMode) -> Result<DynamicImage> {
     match mode {
-        MosaicMode::Character => preprocess_character(img),
-        MosaicMode::Background => preprocess_background(img),
+        MosaicMode::Sharp => preprocess_sharp(img),
+        MosaicMode::Smooth => preprocess_smooth(img),
     }
 }
 
-/// Character mode: keep edges intact; only binarize alpha so quantization
+/// Crops the image to a centered square based on the shortest side, if `should_crop` is true.
+pub fn crop_to_square(mut img: DynamicImage, should_crop: bool) -> DynamicImage {
+    if !should_crop {
+        return img;
+    }
+    let (width, height) = img.dimensions();
+    let size = width.min(height);
+
+    let x = (width - size) / 2;
+    let y = (height - size) / 2;
+
+    img.crop(x, y, size, size)
+}
+
+/// Sharp mode: keep edges intact; only binarize alpha so quantization
 /// does not create semi-transparent fringe pixels.
-fn preprocess_character(img: DynamicImage) -> Result<DynamicImage> {
+fn preprocess_sharp(img: DynamicImage) -> Result<DynamicImage> {
     // infalliable but returning Result for API uniformity with preprocess_background
     Ok(binarize_alpha(img))
 }
 
-/// Background mode: smooth noise with a Gaussian blur, then reduce saturation
+/// Smooth mode: smooth noise with a Gaussian blur, then reduce saturation
 /// so that the KMeans palette covers gradient areas more evenly.
-fn preprocess_background(img: DynamicImage) -> Result<DynamicImage> {
-    let img = apply_gaussian_blur(img, BACKGROUND_BLUR_SIGMA)?;
-    let img = apply_saturation(img, BACKGROUND_SATURATION_FACTOR)?;
+fn preprocess_smooth(img: DynamicImage) -> Result<DynamicImage> {
+    let img = apply_gaussian_blur(img, SMOOTH_BLUR_SIGMA)?;
+    let img = apply_saturation(img, SMOOTH_SATURATION_FACTOR)?;
     Ok(img)
 }
 
@@ -114,16 +128,16 @@ mod tests {
     }
 
     #[test]
-    fn test_preprocess_character_preserves_dimensions() {
+    fn test_preprocess_sharp_preserves_dimensions() {
         let img = solid_rgba(128, 64, 32, 150);
-        let result = preprocess(img, &MosaicMode::Character).unwrap();
+        let result = preprocess(img, &MosaicMode::Sharp).unwrap();
         assert_eq!(result.dimensions(), (2, 2));
     }
 
     #[test]
-    fn test_preprocess_background_preserves_dimensions() {
+    fn test_preprocess_smooth_preserves_dimensions() {
         let img = solid_rgba(128, 64, 32, 255);
-        let result = preprocess(img, &MosaicMode::Background).unwrap();
+        let result = preprocess(img, &MosaicMode::Smooth).unwrap();
         assert_eq!(result.dimensions(), (2, 2));
     }
 
@@ -208,5 +222,29 @@ mod tests {
             assert_eq!(p[1], 27);
             assert_eq!(p[2], 27);
         }
+    }
+
+    #[test]
+    fn test_crop_to_square_landscape() {
+        let buf = ImageBuffer::new(200, 100);
+        let img = DynamicImage::ImageRgba8(buf);
+        let cropped = crop_to_square(img, true);
+        assert_eq!(cropped.dimensions(), (100, 100));
+    }
+
+    #[test]
+    fn test_crop_to_square_portrait() {
+        let buf = ImageBuffer::new(100, 200);
+        let img = DynamicImage::ImageRgba8(buf);
+        let cropped = crop_to_square(img, true);
+        assert_eq!(cropped.dimensions(), (100, 100));
+    }
+
+    #[test]
+    fn test_crop_to_square_disabled() {
+        let buf = ImageBuffer::new(200, 100);
+        let img = DynamicImage::ImageRgba8(buf);
+        let result = crop_to_square(img, false);
+        assert_eq!(result.dimensions(), (200, 100));
     }
 }
