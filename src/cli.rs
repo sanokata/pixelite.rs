@@ -20,4 +20,7 @@ pub struct Cli {
 pub enum Commands {
     /// Create a mosaic from an image
     Mosaic(commands::mosaic::MosaicArgs),
+
+    /// Extract or manage color palettes from images
+    Palette(commands::palette::PaletteArgs),
 }

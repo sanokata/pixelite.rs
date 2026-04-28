@@ -12,6 +12,8 @@ fn main() -> pixelite::Result<()> {
     match cli.command {
         // convert image file to pixel art
         Commands::Mosaic(args) => commands::mosaic::run(args)?,
+        // extract color palette from image
+        Commands::Palette(args) => commands::palette::run(args)?,
     }
 
     Ok(())
