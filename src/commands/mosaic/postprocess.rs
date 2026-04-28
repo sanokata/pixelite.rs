@@ -110,7 +110,11 @@ fn add_outlines(img: DynamicImage) -> Result<DynamicImage> {
 }
 
 fn remove_anti_aliasing(img: DynamicImage) -> Result<DynamicImage> {
-    Ok(img)
+    apply_filter(img, |_rgba, _x, _y, p, [u, d, l, r, ul, ur, dl, dr]| {
+        [(l, r), (u, d), (ul, dr), (ur, dl)]
+            .into_iter()
+            .find_map(|(n1, n2)| (n1 == n2 && n1 != p).then(|| *n1))
+    })
 }
 
 fn is_orphan(img: &image::RgbaImage, x: u32, y: u32) -> bool {
