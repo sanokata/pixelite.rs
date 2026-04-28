@@ -1,8 +1,12 @@
-use clap::{Parser, Subcommand};
 use crate::commands;
+use clap::{Parser, Subcommand};
 
 #[derive(Parser, Debug)]
-#[command(name = "pixelite", about = "A de facto standard Rust CLI tool with subcommands", version)]
+#[command(
+    name = "pixelite",
+    about = "A de facto standard Rust CLI tool with subcommands",
+    version
+)]
 pub struct Cli {
     /// Optional name to operate on
     #[arg(short, long, global = true)]

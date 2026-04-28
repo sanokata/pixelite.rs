@@ -2,8 +2,8 @@ use exoquant::{Color, convert_to_indexed, ditherer, optimizer};
 use image::imageops::FilterType;
 use image::{DynamicImage, GenericImageView};
 
-use crate::Result;
 use super::MosaicMode;
+use crate::Result;
 
 /// Calculate the dimensions of the image after resizing according to max_long_side.
 fn calculate_dimensions(width: u32, height: u32, max_long_side: u32) -> (u32, u32) {

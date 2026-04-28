@@ -57,16 +57,18 @@ fn apply_pixel_perfection(img: DynamicImage) -> Result<DynamicImage> {
             (r, d, l, u, dr), // Bottom-right L
         ];
 
-        targets.into_iter().find_map(|(adj1, adj2, opp1, opp2, diag)| {
-            (adj1 == p && adj2 == p && opp1 != p && opp2 != p && diag != p).then(|| {
-                if opp1 == opp2 {
-                    *opp1
-                } else {
-                    let majority = find_majority_color(rgba, x, y);
-                    if majority != *p { majority } else { *opp1 }
-                }
+        targets
+            .into_iter()
+            .find_map(|(adj1, adj2, opp1, opp2, diag)| {
+                (adj1 == p && adj2 == p && opp1 != p && opp2 != p && diag != p).then(|| {
+                    if opp1 == opp2 {
+                        *opp1
+                    } else {
+                        let majority = find_majority_color(rgba, x, y);
+                        if majority != *p { majority } else { *opp1 }
+                    }
+                })
             })
-        })
     })
 }
 
@@ -105,7 +107,7 @@ fn remove_anti_aliasing(img: DynamicImage) -> Result<DynamicImage> {
     apply_filter(img, |_rgba, _x, _y, p, [u, d, l, r, ul, ur, dl, dr]| {
         [(l, r), (u, d), (ul, dr), (ur, dl)]
             .into_iter()
-            .find_map(|(n1, n2)| (n1 == n2 && n1 != p).then(|| *n1))
+            .find_map(|(n1, n2)| (n1 == n2 && n1 != p).then_some(*n1))
     })
 }
 
@@ -122,10 +124,10 @@ where
     for y in 1..(height - 1) {
         for x in 1..(width - 1) {
             let p = rgba.get_pixel(x, y);
-            if let Some(neighbors) = get_neighbors(&rgba, x, y) {
-                if let Some(new_color) = filter(&rgba, x, y, p, neighbors) {
-                    output.put_pixel(x, y, new_color);
-                }
+            if let Some(new_color) =
+                get_neighbors(&rgba, x, y).and_then(|neighbors| filter(&rgba, x, y, p, neighbors))
+            {
+                output.put_pixel(x, y, new_color);
             }
         }
     }
@@ -147,10 +149,13 @@ fn is_orphan(img: &image::RgbaImage, x: u32, y: u32) -> bool {
             let nx = x as i32 + dx;
             let ny = y as i32 + dy;
 
-            if nx >= 0 && nx < width as i32 && ny >= 0 && ny < height as i32 {
-                if img.get_pixel(nx as u32, ny as u32) == center_pixel {
-                    return false;
-                }
+            if nx >= 0
+                && nx < width as i32
+                && ny >= 0
+                && ny < height as i32
+                && img.get_pixel(nx as u32, ny as u32) == center_pixel
+            {
+                return false;
             }
         }
     }
@@ -243,7 +248,7 @@ mod tests {
         let gray = [128, 128, 128, 255];
         let img = create_test_img(vec![
             vec![white, black, white],
-            vec![white, gray,  white], // sandwiched horizontally
+            vec![white, gray, white], // sandwiched horizontally
             vec![white, black, white],
         ]);
         let result = remove_anti_aliasing(img).unwrap().into_rgba8();
@@ -257,7 +262,7 @@ mod tests {
         let black = [0, 0, 0, 255];
         let img = create_test_img(vec![
             vec![transparent, transparent, transparent],
-            vec![transparent, red,         transparent],
+            vec![transparent, red, transparent],
             vec![transparent, transparent, transparent],
         ]);
         let result = add_outlines(img).unwrap().into_rgba8();
