@@ -82,7 +82,31 @@ fn apply_pixel_perfection(img: DynamicImage) -> Result<DynamicImage> {
 }
 
 fn add_outlines(img: DynamicImage) -> Result<DynamicImage> {
-    Ok(img)
+    let rgba = img.into_rgba8();
+    let (width, height) = rgba.dimensions();
+    let mut output = rgba.clone();
+
+    let outline_color = Rgba([0, 0, 0, 255]); // black
+
+    for y in 0..height {
+        for x in 0..width {
+            if rgba.get_pixel(x, y)[3] > 0 {
+                continue;
+            }
+
+            // If the current transparent pixel has an opaque neighbor, it's part of the outline.
+            let is_outline_pixel = (y > 0 && rgba.get_pixel(x, y - 1)[3] > 0)
+                || (y + 1 < height && rgba.get_pixel(x, y + 1)[3] > 0)
+                || (x > 0 && rgba.get_pixel(x - 1, y)[3] > 0)
+                || (x + 1 < width && rgba.get_pixel(x + 1, y)[3] > 0);
+
+            if is_outline_pixel {
+                output.put_pixel(x, y, outline_color);
+            }
+        }
+    }
+
+    Ok(DynamicImage::ImageRgba8(output))
 }
 
 fn remove_anti_aliasing(img: DynamicImage) -> Result<DynamicImage> {
