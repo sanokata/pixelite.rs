@@ -36,6 +36,17 @@ pub fn resize_to_max_long_side(
     Ok(img.resize_exact(new_width, new_height, filter_type))
 }
 
+/// Crops the image to a centered square based on the shortest side.
+pub fn crop_to_square(mut img: DynamicImage) -> DynamicImage {
+    let (width, height) = img.dimensions();
+    let size = width.min(height);
+
+    let x = (width - size) / 2;
+    let y = (height - size) / 2;
+
+    img.crop(x, y, size, size)
+}
+
 /// Quantizes the colors of an image to the specified number of colors.
 /// If the mode is `Background`, dithering is used to represent smooth gradients.
 /// If the mode is `Character`, dithering is not used to keep clear edges.
@@ -146,5 +157,19 @@ mod tests {
         let rgba = result.into_rgba8();
         let unique_colors: std::collections::HashSet<_> = rgba.pixels().map(|p| p.0).collect();
         assert!(unique_colors.len() <= 4);
+    }
+
+    #[test]
+    fn test_crop_to_square_landscape() {
+        let img = DynamicImage::ImageRgba8(ImageBuffer::<Rgba<u8>, _>::new(200, 100));
+        let cropped = crop_to_square(img);
+        assert_eq!(cropped.dimensions(), (100, 100));
+    }
+
+    #[test]
+    fn test_crop_to_square_portrait() {
+        let img = DynamicImage::ImageRgba8(ImageBuffer::<Rgba<u8>, _>::new(100, 200));
+        let cropped = crop_to_square(img);
+        assert_eq!(cropped.dimensions(), (100, 100));
     }
 }

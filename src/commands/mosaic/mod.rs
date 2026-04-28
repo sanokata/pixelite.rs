@@ -39,14 +39,24 @@ pub struct MosaicArgs {
     /// The mode of pixel art generation.
     #[arg(short = 'm', long, value_enum, default_value_t = MosaicMode::Character)]
     pub mode: MosaicMode,
+
+    /// Whether to crop the input image to a square centered on the middle before processing.
+    #[arg(long, default_value_t = false)]
+    pub crop: bool,
 }
 
 pub fn run(args: MosaicArgs) -> Result<()> {
     let img = open(&args.input)?;
     // 0. preprocess: noise reduction / alpha normalization per mode
     let preprocessed = preprocessing::preprocess(img, &args.mode)?;
+    // 0.5 crop if requested
+    let prepared = if args.crop {
+        processing::crop_to_square(preprocessed)
+    } else {
+        preprocessed
+    };
     // 1. resize the original image to the desired size
-    let resized = processing::resize_to_max_long_side(preprocessed, args.size, &args.mode)?;
+    let resized = processing::resize_to_max_long_side(prepared, args.size, &args.mode)?;
     // 2. quantize the colors of the resized image to the desired number of colors
     let quantized = processing::quantize_colors(resized, args.colors, args.mode.clone())?;
     // 3. postprocess the quantized image
