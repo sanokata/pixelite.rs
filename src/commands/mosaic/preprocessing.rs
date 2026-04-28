@@ -101,5 +101,112 @@ fn apply_saturation(img: DynamicImage, factor: f32) -> Result<DynamicImage> {
 
 #[cfg(test)]
 mod tests {
-    // TODO
+    use image::{DynamicImage, ImageBuffer, Rgba};
+
+    use super::*;
+
+    fn solid_rgba(r: u8, g: u8, b: u8, a: u8) -> DynamicImage {
+        let mut buf = ImageBuffer::new(2, 2);
+        for pixel in buf.pixels_mut() {
+            *pixel = Rgba([r, g, b, a]);
+        }
+        DynamicImage::ImageRgba8(buf)
+    }
+
+    #[test]
+    fn test_preprocess_character_preserves_dimensions() {
+        let img = solid_rgba(128, 64, 32, 150);
+        let result = preprocess(img, &MosaicMode::Character).unwrap();
+        assert_eq!(result.dimensions(), (2, 2));
+    }
+
+    #[test]
+    fn test_preprocess_background_preserves_dimensions() {
+        let img = solid_rgba(128, 64, 32, 255);
+        let result = preprocess(img, &MosaicMode::Background).unwrap();
+        assert_eq!(result.dimensions(), (2, 2));
+    }
+
+    #[test]
+    fn test_binarize_alpha_opaque() {
+        let img = solid_rgba(255, 0, 0, 200);
+        let result = binarize_alpha(img).into_rgba8();
+        assert!(result.pixels().all(|p| p[3] == 255));
+    }
+
+    #[test]
+    fn test_binarize_alpha_transparent() {
+        let img = solid_rgba(255, 0, 0, 100);
+        let result = binarize_alpha(img).into_rgba8();
+        assert!(result.pixels().all(|p| p[3] == 0));
+    }
+
+    #[test]
+    fn test_binarize_alpha_boundaries() {
+        let img_127 = solid_rgba(255, 0, 0, 127);
+        assert!(
+            binarize_alpha(img_127)
+                .into_rgba8()
+                .pixels()
+                .all(|p| p[3] == 0)
+        );
+
+        let img_128 = solid_rgba(255, 0, 0, 128);
+        assert!(
+            binarize_alpha(img_128)
+                .into_rgba8()
+                .pixels()
+                .all(|p| p[3] == 255)
+        );
+    }
+
+    #[test]
+    fn test_apply_gaussian_blur_spreads_pixels() {
+        let mut buf = ImageBuffer::new(5, 5);
+        buf.put_pixel(2, 2, Rgba([255, 255, 255, 255]));
+        let img = DynamicImage::ImageRgba8(buf);
+
+        let blurred = apply_gaussian_blur(img, 1.0).unwrap().into_rgba8();
+
+        assert!(blurred.get_pixel(2, 2)[0] < 255);
+        assert!(blurred.get_pixel(2, 1)[0] > 0);
+    }
+
+    #[test]
+    fn test_apply_saturation_grayscale() {
+        // factor=0.0 should yield a grayscale image (all channels equal to luma)
+        let img = solid_rgba(200, 100, 50, 255);
+        let result = apply_saturation(img, 0.0).unwrap().into_rgba8();
+        for p in result.pixels() {
+            assert_eq!(p[0], p[1]);
+            assert_eq!(p[1], p[2]);
+        }
+    }
+
+    #[test]
+    fn test_apply_saturation_no_change() {
+        // factor=1.0 should preserve original colors
+        let img = solid_rgba(200, 100, 50, 255);
+        let result = apply_saturation(img, 1.0).unwrap().into_rgba8();
+        for p in result.pixels() {
+            assert_eq!(p[0], 200);
+            assert_eq!(p[1], 100);
+            assert_eq!(p[2], 50);
+        }
+    }
+
+    #[test]
+    fn test_apply_saturation_partial() {
+        // luma = 255 * 0.2126 = 54.213
+        // R = 54.213 + 0.5 * (255 - 54.213) = 154.6065 -> 155
+        // G = 54.213 + 0.5 * (0 - 54.213) = 27.1065 -> 27
+        // B = 54.213 + 0.5 * (0 - 54.213) = 27.1065 -> 27
+        let img = solid_rgba(255, 0, 0, 255);
+        let result = apply_saturation(img, 0.5).unwrap().into_rgba8();
+        for p in result.pixels() {
+            assert_eq!(p[0], 155);
+            assert_eq!(p[1], 27);
+            assert_eq!(p[2], 27);
+        }
+    }
 }
