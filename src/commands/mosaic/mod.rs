@@ -48,7 +48,7 @@ pub fn run(args: MosaicArgs) -> Result<()> {
     // 1. resize the original image to the desired size
     let resized = processing::resize_to_max_long_side(preprocessed, args.size, &args.mode)?;
     // 2. quantize the colors of the resized image to the desired number of colors
-    let quantized = processing::quantize_colors(resized, args.colors, args.mode)?;
+    let quantized = processing::quantize_colors(resized, args.colors, args.mode.clone())?;
     // 3. postprocess the quantized image
     let postprocessed = postprocessing::postprocess(quantized, &args.mode)?;
     // 4. save the postprocessed image to the output file
