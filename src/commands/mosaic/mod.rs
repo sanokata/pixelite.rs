@@ -1,3 +1,4 @@
+pub mod postprocessing;
 pub mod preprocessing;
 pub mod processing;
 
@@ -48,8 +49,10 @@ pub fn run(args: MosaicArgs) -> Result<()> {
     let resized = processing::resize_to_max_long_side(preprocessed, args.size, &args.mode)?;
     // 2. quantize the colors of the resized image to the desired number of colors
     let quantized = processing::quantize_colors(resized, args.colors, args.mode)?;
-    // 3. save the quantized image to the output file
+    // 3. postprocess the quantized image
+    let postprocessed = postprocessing::postprocess(quantized, &args.mode)?;
+    // 4. save the postprocessed image to the output file
     let format = ImageFormat::from_path(&args.output).unwrap_or(ImageFormat::Png);
-    quantized.save_with_format(&args.output, format)?;
+    postprocessed.save_with_format(&args.output, format)?;
     Ok(())
 }
