@@ -1,11 +1,11 @@
-pub mod extract;
 pub mod apply;
+pub mod extract;
 
-use std::path::Path;
-use clap::{Args, Subcommand};
-use image::{DynamicImage, ImageBuffer, ImageFormat, Rgba, GenericImageView};
-use exoquant::{Color, Colorf, ditherer, optimizer, convert_to_indexed};
 use crate::Result;
+use clap::{Args, Subcommand};
+use exoquant::{Color, Colorf, convert_to_indexed, ditherer, optimizer};
+use image::{DynamicImage, GenericImageView, ImageBuffer, ImageFormat, Rgba};
+use std::path::Path;
 
 /// A structure representing a color palette.
 #[derive(Debug, Clone)]
@@ -19,7 +19,12 @@ enum PaletteFormat {
 
 impl PaletteFormat {
     fn from_path(path: &Path) -> Self {
-        match path.extension().and_then(|s| s.to_str()).map(|s| s.to_lowercase()).as_deref() {
+        match path
+            .extension()
+            .and_then(|s| s.to_str())
+            .map(|s| s.to_lowercase())
+            .as_deref()
+        {
             Some("gpl") => PaletteFormat::Gpl,
             _ => PaletteFormat::Png,
         }
@@ -32,7 +37,6 @@ impl Palette {
         let (width, height) = img.dimensions();
         let total_pixels = width * height;
 
-        // Memory efficiency: Use img.pixels() directly to avoid full buffer copy
         let pixels: Vec<Color> = if use_sampling && total_pixels > 10000 {
             let step = (total_pixels / 10000).max(1);
             img.pixels()
@@ -53,15 +57,16 @@ impl Palette {
             &ditherer::None,
         );
 
-        Ok(Palette(palette.into_iter().map(|c| Rgba([c.r, c.g, c.b, c.a])).collect()))
+        Ok(Palette(
+            palette
+                .into_iter()
+                .map(|c| Rgba([c.r, c.g, c.b, c.a]))
+                .collect(),
+        ))
     }
 
-    /// Applies this palette to an image.
-    /// TODO: implement dithering support
-    pub fn apply(&self, img: DynamicImage, _use_dithering: bool) -> DynamicImage {
-        let (width, height) = img.dimensions();
-        
-        // Efficiency: Pre-calculate the float palette and input pixels
+    /// Applies this palette to an image, optionally using Floyd-Steinberg dithering.
+    pub fn apply(&self, img: DynamicImage, use_dithering: bool) -> DynamicImage {
         let exo_palette = self.to_exoquant_colors();
         let exo_palette_f: Vec<Colorf> = exo_palette
             .iter()
@@ -73,48 +78,153 @@ impl Palette {
             })
             .collect();
 
-        let pixels_f: Vec<Colorf> = img.pixels()
-            .map(|(_, _, p)| Colorf {
+        if use_dithering {
+            self.apply_floyd_steinberg(img, &exo_palette, &exo_palette_f)
+        } else {
+            self.apply_nearest(img, &exo_palette, &exo_palette_f)
+        }
+    }
+
+    fn apply_nearest(
+        &self,
+        img: DynamicImage,
+        exo_palette: &[Color],
+        exo_palette_f: &[Colorf],
+    ) -> DynamicImage {
+        let (width, height) = img.dimensions();
+        let quantized = ImageBuffer::from_fn(width, height, |x, y| {
+            let p = img.get_pixel(x, y);
+            let pf = Colorf {
                 r: p[0] as f64,
                 g: p[1] as f64,
                 b: p[2] as f64,
                 a: p[3] as f64,
-            })
-            .collect();
-
-        let quantized = ImageBuffer::from_fn(width, height, |x, y| {
-            let p = pixels_f[(y * width + x) as usize];
-            let mut best_idx = 0;
-            let mut min_dist = f64::MAX;
-            
-            // Optimization: Iterate over pre-converted float palette
-            for (i, cf) in exo_palette_f.iter().enumerate() {
-                let dr = p.r - cf.r;
-                let dg = p.g - cf.g;
-                let db = p.b - cf.b;
-                let da = p.a - cf.a;
-                let dist = dr * dr + dg * dg + db * db + da * da;
-                
-                if dist < min_dist {
-                    min_dist = dist;
-                    best_idx = i;
-                }
-            }
-            
-            let color = exo_palette[best_idx];
-            Rgba([color.r, color.g, color.b, color.a])
+            };
+            let best_idx = self.find_nearest(&pf, exo_palette_f);
+            let c = exo_palette[best_idx];
+            Rgba([c.r, c.g, c.b, c.a])
         });
-
         DynamicImage::ImageRgba8(quantized)
     }
 
-    /// Loads a palette from a file (.gpl or .png).
+    fn apply_floyd_steinberg(
+        &self,
+        img: DynamicImage,
+        exo_palette: &[Color],
+        exo_palette_f: &[Colorf],
+    ) -> DynamicImage {
+        let (width, height) = img.dimensions();
+        let mut output = ImageBuffer::new(width, height);
+
+        // Optimization: Use only two rows for error buffer (current and next)
+        // This dramatically reduces memory usage for large images.
+        let mut curr_error = vec![
+            Colorf {
+                r: 0.0,
+                g: 0.0,
+                b: 0.0,
+                a: 0.0
+            };
+            width as usize
+        ];
+        let mut next_error = vec![
+            Colorf {
+                r: 0.0,
+                g: 0.0,
+                b: 0.0,
+                a: 0.0
+            };
+            width as usize
+        ];
+
+        for y in 0..height {
+            for x in 0..width {
+                let p = img.get_pixel(x, y);
+                let err = curr_error[x as usize];
+
+                let pf = Colorf {
+                    r: (p[0] as f64 + err.r).clamp(0.0, 255.0),
+                    g: (p[1] as f64 + err.g).clamp(0.0, 255.0),
+                    b: (p[2] as f64 + err.b).clamp(0.0, 255.0),
+                    a: (p[3] as f64 + err.a).clamp(0.0, 255.0),
+                };
+
+                let best_idx = self.find_nearest(&pf, exo_palette_f);
+                let c = exo_palette[best_idx];
+                output.put_pixel(x, y, Rgba([c.r, c.g, c.b, c.a]));
+
+                let diff = Colorf {
+                    r: pf.r - c.r as f64,
+                    g: pf.g - c.g as f64,
+                    b: pf.b - c.b as f64,
+                    a: pf.a - c.a as f64,
+                };
+
+                // Diffuse error
+                if x + 1 < width {
+                    curr_error[(x + 1) as usize].r += diff.r * 7.0 / 16.0;
+                    curr_error[(x + 1) as usize].g += diff.g * 7.0 / 16.0;
+                    curr_error[(x + 1) as usize].b += diff.b * 7.0 / 16.0;
+                    curr_error[(x + 1) as usize].a += diff.a * 7.0 / 16.0;
+                }
+                if y + 1 < height {
+                    if x > 0 {
+                        next_error[(x - 1) as usize].r += diff.r * 3.0 / 16.0;
+                        next_error[(x - 1) as usize].g += diff.g * 3.0 / 16.0;
+                        next_error[(x - 1) as usize].b += diff.b * 3.0 / 16.0;
+                        next_error[(x - 1) as usize].a += diff.a * 3.0 / 16.0;
+                    }
+                    next_error[x as usize].r += diff.r * 5.0 / 16.0;
+                    next_error[x as usize].g += diff.g * 5.0 / 16.0;
+                    next_error[x as usize].b += diff.b * 5.0 / 16.0;
+                    next_error[x as usize].a += diff.a * 5.0 / 16.0;
+                    if x + 1 < width {
+                        next_error[(x + 1) as usize].r += diff.r * 1.0 / 16.0;
+                        next_error[(x + 1) as usize].g += diff.g * 1.0 / 16.0;
+                        next_error[(x + 1) as usize].b += diff.b * 1.0 / 16.0;
+                        next_error[(x + 1) as usize].a += diff.a * 1.0 / 16.0;
+                    }
+                }
+            }
+            // Move next_error to curr_error and reset next_error
+            std::mem::swap(&mut curr_error, &mut next_error);
+            for err in next_error.iter_mut() {
+                *err = Colorf {
+                    r: 0.0,
+                    g: 0.0,
+                    b: 0.0,
+                    a: 0.0,
+                };
+            }
+        }
+
+        DynamicImage::ImageRgba8(output)
+    }
+
+    fn find_nearest(&self, p: &Colorf, palette: &[Colorf]) -> usize {
+        let mut best_idx = 0;
+        let mut min_dist = f64::MAX;
+        for (i, cf) in palette.iter().enumerate() {
+            let dr = p.r - cf.r;
+            let dg = p.g - cf.g;
+            let db = p.b - cf.b;
+            let da = p.a - cf.a;
+            let dist = dr * dr + dg * dg + db * db + da * da;
+
+            if dist < min_dist {
+                min_dist = dist;
+                best_idx = i;
+            }
+        }
+        best_idx
+    }
+
     pub fn load(path: &Path) -> Result<Self> {
-        let extension = path.extension()
+        let extension = path
+            .extension()
             .and_then(|s| s.to_str())
             .map(|s| s.to_lowercase())
             .unwrap_or_default();
-
         if extension == "gpl" {
             Self::load_from_gpl(path)
         } else {
@@ -127,13 +237,16 @@ impl Palette {
         let file = std::fs::File::open(path)?;
         let reader = BufReader::new(file);
         let mut colors = Vec::new();
-
         for line in reader.lines() {
             let line = line?;
-            if line.starts_with('#') || line.is_empty() || line.starts_with("GIMP") || line.starts_with("Name") || line.starts_with("Columns") {
+            if line.starts_with('#')
+                || line.is_empty()
+                || line.starts_with("GIMP")
+                || line.starts_with("Name")
+                || line.starts_with("Columns")
+            {
                 continue;
             }
-
             let parts: Vec<&str> = line.split_whitespace().collect();
             if parts.len() >= 3 {
                 let r = parts[0].parse::<u8>().unwrap_or(0);
@@ -142,11 +255,9 @@ impl Palette {
                 colors.push(Rgba([r, g, b, 255]));
             }
         }
-
         if colors.is_empty() {
             return Err("No colors found in GPL file".into());
         }
-
         Ok(Palette(colors))
     }
 
@@ -154,13 +265,11 @@ impl Palette {
         let img = image::open(path)?;
         let mut colors = Vec::new();
         let mut seen = std::collections::HashSet::new();
-
         for (_, _, pixel) in img.pixels() {
             if seen.insert(pixel.0) {
                 colors.push(pixel);
             }
         }
-
         Ok(Palette(colors))
     }
 
@@ -185,16 +294,29 @@ impl Palette {
         use std::io::{BufWriter, Write};
         let file = std::fs::File::create(path)?;
         let mut writer = BufWriter::new(file);
-        writeln!(writer, "GIMP Palette\nName: {}\nColumns: 0\n#", path.file_stem().and_then(|s| s.to_str()).unwrap_or("pixelite"))?;
+        writeln!(
+            writer,
+            "GIMP Palette\nName: {}\nColumns: 0\n#",
+            path.file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or("pixelite")
+        )?;
         for color in &self.0 {
-            writeln!(writer, "{:>3} {:>3} {:>3}\tUntitled", color[0], color[1], color[2])?;
+            writeln!(
+                writer,
+                "{:>3} {:>3} {:>3}\tUntitled",
+                color[0], color[1], color[2]
+            )?;
         }
         writer.flush()?;
         Ok(())
     }
 
     pub fn to_exoquant_colors(&self) -> Vec<Color> {
-        self.0.iter().map(|c| Color::new(c[0], c[1], c[2], c[3])).collect()
+        self.0
+            .iter()
+            .map(|c| Color::new(c[0], c[1], c[2], c[3]))
+            .collect()
     }
 }
 
@@ -226,8 +348,14 @@ mod tests {
 
     #[test]
     fn test_palette_format_detection() {
-        assert_eq!(PaletteFormat::from_path(Path::new("test.gpl")), PaletteFormat::Gpl);
-        assert_eq!(PaletteFormat::from_path(Path::new("test.png")), PaletteFormat::Png);
+        assert_eq!(
+            PaletteFormat::from_path(Path::new("test.gpl")),
+            PaletteFormat::Gpl
+        );
+        assert_eq!(
+            PaletteFormat::from_path(Path::new("test.png")),
+            PaletteFormat::Png
+        );
     }
 
     #[test]
@@ -236,12 +364,10 @@ mod tests {
         let temp_dir = std::env::temp_dir();
         let path = temp_dir.join("test_load.gpl");
         std::fs::write(&path, content).unwrap();
-
         let palette = Palette::load(&path).unwrap();
         assert_eq!(palette.0.len(), 2);
         assert_eq!(palette.0[0], Rgba([255, 0, 0, 255]));
         assert_eq!(palette.0[1], Rgba([0, 255, 0, 255]));
-
         std::fs::remove_file(path).unwrap();
     }
 }
