@@ -225,7 +225,7 @@ fn get_neighbors(img: &image::RgbaImage, x: u32, y: u32) -> Option<[&Rgba<u8>; 8
 #[cfg(test)]
 mod tests {
     use super::*;
-    use image::{ImageBuffer, Rgba};
+    use image::{GenericImageView, ImageBuffer, Rgba};
 
     fn create_test_img(pixels: Vec<Vec<[u8; 4]>>) -> DynamicImage {
         let height = pixels.len() as u32;
@@ -319,5 +319,74 @@ mod tests {
         ]);
         let result = apply_pixel_perfection(img).unwrap().into_rgba8();
         assert_eq!(result.get_pixel(1, 1).0, b);
+    }
+
+    #[test]
+    fn test_upscale_factor_one_is_noop() {
+        let img = create_test_img(vec![
+            vec![[255, 0, 0, 255], [0, 255, 0, 255]],
+            vec![[0, 0, 255, 255], [255, 255, 0, 255]],
+        ]);
+        let result = upscale(img, 1);
+        assert_eq!(result.dimensions(), (2, 2));
+    }
+
+    #[test]
+    fn test_postprocess_sharp_mode_completes() {
+        let w = [255, 255, 255, 255];
+        let t = [0, 0, 0, 0];
+        let img = create_test_img(vec![
+            vec![t, t, t, t, t],
+            vec![t, w, w, w, t],
+            vec![t, w, w, w, t],
+            vec![t, w, w, w, t],
+            vec![t, t, t, t, t],
+        ]);
+        let result = postprocess(img, &MosaicMode::Sharp);
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap().dimensions(), (5, 5));
+    }
+
+    #[test]
+    fn test_postprocess_smooth_mode_completes() {
+        let w = [255, 255, 255, 255];
+        let b = [0, 0, 0, 255];
+        let g = [128, 128, 128, 255];
+        let img = create_test_img(vec![
+            vec![w, b, w],
+            vec![b, g, b],
+            vec![w, b, w],
+        ]);
+        let result = postprocess(img, &MosaicMode::Smooth);
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap().dimensions(), (3, 3));
+    }
+
+    #[test]
+    fn test_remove_orphan_pixels_connected_pixel_unchanged() {
+        let red = [255, 0, 0, 255];
+        // Center pixel is surrounded by the same color — not an orphan, must not be changed
+        let img = create_test_img(vec![
+            vec![red, red, red],
+            vec![red, red, red],
+            vec![red, red, red],
+        ]);
+        let result = remove_orphan_pixels(img).unwrap().into_rgba8();
+        assert_eq!(result.get_pixel(1, 1).0, red);
+    }
+
+    #[test]
+    fn test_add_outlines_fully_opaque_unchanged() {
+        let red = [255, 0, 0, 255];
+        // No transparent pixels means no outline pixels should be added
+        let img = create_test_img(vec![
+            vec![red, red, red],
+            vec![red, red, red],
+            vec![red, red, red],
+        ]);
+        let result = add_outlines(img).unwrap().into_rgba8();
+        for pixel in result.pixels() {
+            assert_eq!(pixel.0, red);
+        }
     }
 }

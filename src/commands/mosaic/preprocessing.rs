@@ -247,4 +247,39 @@ mod tests {
         let result = crop_to_square(img, false);
         assert_eq!(result.dimensions(), (200, 100));
     }
+
+    #[test]
+    fn test_crop_to_square_already_square() {
+        let buf = ImageBuffer::new(100, 100);
+        let img = DynamicImage::ImageRgba8(buf);
+        let result = crop_to_square(img, true);
+        assert_eq!(result.dimensions(), (100, 100));
+    }
+
+    #[test]
+    fn test_apply_saturation_oversaturation() {
+        // factor > 1.0 amplifies the deviation of each channel from the luminance value
+        let img = solid_rgba(200, 100, 50, 255);
+        let result = apply_saturation(img, 1.5).unwrap().into_rgba8();
+        for p in result.pixels() {
+            // luma ≈ 117.65; R is above luma so it should be pushed higher
+            assert!(p[0] > 200, "R should be amplified beyond 200, got {}", p[0]);
+            // G and B are below luma so they should be pushed lower
+            assert!(p[1] < 100, "G should decrease below 100, got {}", p[1]);
+            assert!(p[2] < 50, "B should decrease below 50, got {}", p[2]);
+        }
+    }
+
+    #[test]
+    fn test_binarize_alpha_rgb_channels_unchanged() {
+        // Binarization must not alter the RGB channels, only alpha
+        let img = solid_rgba(100, 150, 200, 150); // alpha >= 128 → becomes 255
+        let result = binarize_alpha(img).into_rgba8();
+        for p in result.pixels() {
+            assert_eq!(p[0], 100);
+            assert_eq!(p[1], 150);
+            assert_eq!(p[2], 200);
+            assert_eq!(p[3], 255);
+        }
+    }
 }

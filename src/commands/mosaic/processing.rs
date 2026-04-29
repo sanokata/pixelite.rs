@@ -128,4 +128,38 @@ mod tests {
         let unique_colors: std::collections::HashSet<_> = rgba.pixels().map(|p| p.0).collect();
         assert!(unique_colors.len() <= 4);
     }
+
+    #[test]
+    fn test_calculate_dimensions_extreme_wide() {
+        // 100:1 aspect ratio — short side must round to at least 1
+        let (w, h) = calculate_dimensions(1000, 10, 64);
+        assert_eq!(w, 64);
+        assert_eq!(h, 1); // 10/1000 * 64 = 0.64 → rounds to 1
+    }
+
+    #[test]
+    fn test_calculate_dimensions_extreme_tall() {
+        // 1:100 aspect ratio
+        let (w, h) = calculate_dimensions(10, 1000, 64);
+        assert_eq!(w, 1);
+        assert_eq!(h, 64);
+    }
+
+    #[test]
+    fn test_quantize_colors_dither_override() {
+        // Sharp mode defaults to DitherMethod::None, but an explicit override must be accepted
+        let mut img_buf = ImageBuffer::new(4, 4);
+        for pixel in img_buf.pixels_mut() {
+            *pixel = Rgba([128, 128, 128, 255]);
+        }
+        let img = DynamicImage::ImageRgba8(img_buf);
+
+        let result =
+            quantize_colors(img, 2, MosaicMode::Sharp, Some(DitherMethod::Ordered)).unwrap();
+        assert_eq!(result.dimensions(), (4, 4));
+
+        let rgba = result.into_rgba8();
+        let unique_colors: std::collections::HashSet<_> = rgba.pixels().map(|p| p.0).collect();
+        assert!(unique_colors.len() <= 2);
+    }
 }

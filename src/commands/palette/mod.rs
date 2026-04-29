@@ -415,4 +415,197 @@ mod tests {
         assert_eq!(palette.0[1], Rgba([0, 255, 0, 255]));
         std::fs::remove_file(path).unwrap();
     }
+
+    #[test]
+    fn test_load_gpl_no_colors_returns_error() {
+        let content = "GIMP Palette\nName: empty\nColumns: 0\n#\n";
+        let path = std::env::temp_dir().join("test_empty.gpl");
+        std::fs::write(&path, content).unwrap();
+        let result = Palette::load(&path);
+        std::fs::remove_file(&path).unwrap();
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_load_gpl_skips_incomplete_lines() {
+        // Lines with fewer than 3 whitespace-separated tokens must be skipped
+        let content = "GIMP Palette\nName: test\n#\n255 0\n128 0 128\tPurple\n";
+        let path = std::env::temp_dir().join("test_incomplete.gpl");
+        std::fs::write(&path, content).unwrap();
+        let palette = Palette::load(&path).unwrap();
+        std::fs::remove_file(&path).unwrap();
+        assert_eq!(palette.0.len(), 1);
+        assert_eq!(palette.0[0], Rgba([128, 0, 128, 255]));
+    }
+
+    #[test]
+    fn test_format_detection_uppercase_extension() {
+        assert_eq!(
+            PaletteFormat::from_path(Path::new("test.GPL")),
+            PaletteFormat::Gpl
+        );
+        assert_eq!(
+            PaletteFormat::from_path(Path::new("test.Gpl")),
+            PaletteFormat::Gpl
+        );
+    }
+
+    #[test]
+    fn test_format_detection_no_extension() {
+        assert_eq!(
+            PaletteFormat::from_path(Path::new("palette")),
+            PaletteFormat::Png
+        );
+    }
+
+    #[test]
+    fn test_to_exoquant_colors() {
+        let palette = Palette(vec![
+            Rgba([255, 0, 128, 200]),
+            Rgba([10, 20, 30, 255]),
+        ]);
+        let exo = palette.to_exoquant_colors();
+        assert_eq!(exo.len(), 2);
+        assert_eq!((exo[0].r, exo[0].g, exo[0].b, exo[0].a), (255, 0, 128, 200));
+        assert_eq!((exo[1].r, exo[1].g, exo[1].b, exo[1].a), (10, 20, 30, 255));
+    }
+
+    #[test]
+    fn test_save_load_gpl_roundtrip() {
+        let original = Palette(vec![
+            Rgba([255, 0, 0, 255]),
+            Rgba([0, 128, 0, 255]),
+            Rgba([0, 0, 200, 255]),
+        ]);
+        let path = std::env::temp_dir().join("test_roundtrip.gpl");
+        original.save(&path).unwrap();
+        let loaded = Palette::load(&path).unwrap();
+        std::fs::remove_file(&path).unwrap();
+        assert_eq!(loaded.0.len(), 3);
+        assert_eq!(loaded.0[0], Rgba([255, 0, 0, 255]));
+        assert_eq!(loaded.0[1], Rgba([0, 128, 0, 255]));
+        assert_eq!(loaded.0[2], Rgba([0, 0, 200, 255]));
+    }
+
+    #[test]
+    fn test_save_load_png_roundtrip() {
+        let original = Palette(vec![
+            Rgba([255, 0, 0, 255]),
+            Rgba([0, 255, 0, 255]),
+            Rgba([0, 0, 255, 255]),
+        ]);
+        let path = std::env::temp_dir().join("test_roundtrip_palette.png");
+        original.save(&path).unwrap();
+        let loaded = Palette::load(&path).unwrap();
+        std::fs::remove_file(&path).unwrap();
+        assert_eq!(loaded.0.len(), original.0.len());
+        for color in &original.0 {
+            assert!(loaded.0.contains(color), "missing color {:?}", color);
+        }
+    }
+
+    #[test]
+    fn test_apply_nearest_selects_closest_color() {
+        let palette = Palette(vec![
+            Rgba([255, 0, 0, 255]),
+            Rgba([0, 0, 255, 255]),
+        ]);
+        let mut buf = ImageBuffer::new(2, 1);
+        buf.put_pixel(0, 0, Rgba([200, 0, 0, 255])); // closer to red
+        buf.put_pixel(1, 0, Rgba([0, 0, 200, 255])); // closer to blue
+        let img = DynamicImage::ImageRgba8(buf);
+
+        let result = palette.apply(img, DitherMethod::None).unwrap().into_rgba8();
+
+        assert_eq!(result.get_pixel(0, 0).0, [255, 0, 0, 255]);
+        assert_eq!(result.get_pixel(1, 0).0, [0, 0, 255, 255]);
+    }
+
+    #[test]
+    fn test_apply_floyd_steinberg_output_in_palette() {
+        let palette = Palette(vec![
+            Rgba([0, 0, 0, 255]),
+            Rgba([255, 255, 255, 255]),
+        ]);
+        let mut buf = ImageBuffer::new(4, 4);
+        for (x, y, pixel) in buf.enumerate_pixels_mut() {
+            let v = ((x + y) * 32) as u8;
+            *pixel = Rgba([v, v, v, 255]);
+        }
+        let img = DynamicImage::ImageRgba8(buf);
+
+        let result = palette
+            .apply(img, DitherMethod::FloydSteinberg)
+            .unwrap()
+            .into_rgba8();
+
+        let valid: std::collections::HashSet<[u8; 4]> =
+            [[0, 0, 0, 255], [255, 255, 255, 255]].into_iter().collect();
+        for pixel in result.pixels() {
+            assert!(valid.contains(&pixel.0), "unexpected pixel: {:?}", pixel.0);
+        }
+    }
+
+    #[test]
+    fn test_apply_ordered_output_in_palette() {
+        let palette = Palette(vec![
+            Rgba([0, 0, 0, 255]),
+            Rgba([255, 255, 255, 255]),
+        ]);
+        let mut buf = ImageBuffer::new(4, 4);
+        for pixel in buf.pixels_mut() {
+            *pixel = Rgba([128, 128, 128, 255]);
+        }
+        let img = DynamicImage::ImageRgba8(buf);
+
+        let result = palette
+            .apply(img, DitherMethod::Ordered)
+            .unwrap()
+            .into_rgba8();
+
+        let valid: std::collections::HashSet<[u8; 4]> =
+            [[0, 0, 0, 255], [255, 255, 255, 255]].into_iter().collect();
+        for pixel in result.pixels() {
+            assert!(valid.contains(&pixel.0), "unexpected pixel: {:?}", pixel.0);
+        }
+    }
+
+    #[test]
+    fn test_floyd_steinberg_single_pixel_wide() {
+        // Width=1: the x+1<width and x>0 branches are never taken — should not panic
+        let palette = Palette(vec![Rgba([0, 0, 0, 255]), Rgba([255, 255, 255, 255])]);
+        let mut buf = ImageBuffer::new(1, 4);
+        for pixel in buf.pixels_mut() {
+            *pixel = Rgba([128, 128, 128, 255]);
+        }
+        let img = DynamicImage::ImageRgba8(buf);
+        let result = palette.apply(img, DitherMethod::FloydSteinberg).unwrap();
+        assert_eq!(result.dimensions(), (1, 4));
+    }
+
+    #[test]
+    fn test_floyd_steinberg_single_pixel_tall() {
+        // Height=1: the y+1<height branch is never taken — should not panic
+        let palette = Palette(vec![Rgba([0, 0, 0, 255]), Rgba([255, 255, 255, 255])]);
+        let mut buf = ImageBuffer::new(4, 1);
+        for pixel in buf.pixels_mut() {
+            *pixel = Rgba([128, 128, 128, 255]);
+        }
+        let img = DynamicImage::ImageRgba8(buf);
+        let result = palette.apply(img, DitherMethod::FloydSteinberg).unwrap();
+        assert_eq!(result.dimensions(), (4, 1));
+    }
+
+    #[test]
+    fn test_extract_with_large_image_uses_sampling() {
+        // > 10000 pixels triggers the sampling code path
+        let mut buf = ImageBuffer::new(101, 100);
+        for (x, _, pixel) in buf.enumerate_pixels_mut() {
+            *pixel = Rgba([(x % 256) as u8, 0, 0, 255]);
+        }
+        let img = DynamicImage::ImageRgba8(buf);
+        let result = Palette::extract(&img, 4, true);
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap().0.len(), 4);
+    }
 }
