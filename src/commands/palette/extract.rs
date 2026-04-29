@@ -1,9 +1,9 @@
-use std::path::PathBuf;
 use clap::Args;
 use image::open;
+use std::path::PathBuf;
 
-use crate::Result;
 use super::Palette;
+use crate::Result;
 
 #[derive(Args, Debug)]
 pub struct ExtractArgs {
@@ -33,7 +33,7 @@ pub fn run(args: ExtractArgs) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use image::{ImageBuffer, Rgba, DynamicImage};
+    use image::{DynamicImage, ImageBuffer, Rgba};
     use std::collections::HashSet;
 
     #[test]

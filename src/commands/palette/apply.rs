@@ -1,9 +1,9 @@
-use std::path::PathBuf;
 use clap::Args;
 use image::open;
+use std::path::PathBuf;
 
-use crate::Result;
 use super::Palette;
+use crate::Result;
 
 #[derive(Args, Debug)]
 pub struct ApplyArgs {
