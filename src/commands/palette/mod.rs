@@ -2,7 +2,7 @@ pub mod apply;
 pub mod extract;
 
 use crate::Result;
-use clap::{Args, Subcommand};
+use clap::{Args, Subcommand, ValueEnum};
 use exoquant::{Color, Colorf, convert_to_indexed, ditherer, optimizer};
 use image::{DynamicImage, GenericImageView, ImageBuffer, ImageFormat, Rgba};
 use std::path::Path;
@@ -15,6 +15,17 @@ pub struct Palette(pub Vec<Rgba<u8>>);
 enum PaletteFormat {
     Gpl,
     Png,
+}
+
+/// Supported dithering methods
+#[derive(Debug, Clone, Copy, ValueEnum, PartialEq)]
+pub enum DitherMethod {
+    /// No dithering (Nearest neighbor)
+    None,
+    /// Floyd-Steinberg error diffusion
+    FloydSteinberg,
+    /// Ordered dithering using a 4x4 Bayer matrix
+    Ordered,
 }
 
 impl PaletteFormat {
@@ -65,8 +76,8 @@ impl Palette {
         ))
     }
 
-    /// Applies this palette to an image, optionally using Floyd-Steinberg dithering.
-    pub fn apply(&self, img: DynamicImage, use_dithering: bool) -> DynamicImage {
+    /// Applies this palette to an image using the specified dithering method.
+    pub fn apply(&self, img: DynamicImage, method: DitherMethod) -> Result<DynamicImage> {
         let exo_palette = self.to_exoquant_colors();
         let exo_palette_f: Vec<Colorf> = exo_palette
             .iter()
@@ -78,10 +89,12 @@ impl Palette {
             })
             .collect();
 
-        if use_dithering {
-            self.apply_floyd_steinberg(img, &exo_palette, &exo_palette_f)
-        } else {
-            self.apply_nearest(img, &exo_palette, &exo_palette_f)
+        match method {
+            DitherMethod::None => Ok(self.apply_nearest(img, &exo_palette, &exo_palette_f)),
+            DitherMethod::FloydSteinberg => {
+                Ok(self.apply_floyd_steinberg(img, &exo_palette, &exo_palette_f))
+            }
+            DitherMethod::Ordered => Ok(self.apply_ordered(img, &exo_palette, &exo_palette_f)),
         }
     }
 
@@ -116,8 +129,6 @@ impl Palette {
         let (width, height) = img.dimensions();
         let mut output = ImageBuffer::new(width, height);
 
-        // Optimization: Use only two rows for error buffer (current and next)
-        // This dramatically reduces memory usage for large images.
         let mut curr_error = vec![
             Colorf {
                 r: 0.0,
@@ -160,7 +171,6 @@ impl Palette {
                     a: pf.a - c.a as f64,
                 };
 
-                // Diffuse error
                 if x + 1 < width {
                     curr_error[(x + 1) as usize].r += diff.r * 7.0 / 16.0;
                     curr_error[(x + 1) as usize].g += diff.g * 7.0 / 16.0;
@@ -186,7 +196,6 @@ impl Palette {
                     }
                 }
             }
-            // Move next_error to curr_error and reset next_error
             std::mem::swap(&mut curr_error, &mut next_error);
             for err in next_error.iter_mut() {
                 *err = Colorf {
@@ -199,6 +208,42 @@ impl Palette {
         }
 
         DynamicImage::ImageRgba8(output)
+    }
+
+    fn apply_ordered(
+        &self,
+        img: DynamicImage,
+        exo_palette: &[Color],
+        exo_palette_f: &[Colorf],
+    ) -> DynamicImage {
+        let (width, height) = img.dimensions();
+        // 4x4 Bayer Matrix
+        let bayer: [[f64; 4]; 4] = [
+            [0.0, 8.0, 2.0, 10.0],
+            [12.0, 4.0, 14.0, 6.0],
+            [3.0, 11.0, 1.0, 9.0],
+            [15.0, 7.0, 13.0, 5.0],
+        ];
+
+        let quantized = ImageBuffer::from_fn(width, height, |x, y| {
+            let p = img.get_pixel(x, y);
+            // Bayer matrix affects the color by adding a positional offset
+            // Scale the 0-15 matrix value to a centered threshold: (value - 7.5) * (255 / 16)
+            let threshold = (bayer[(y % 4) as usize][(x % 4) as usize] - 7.5) * (255.0 / 16.0);
+
+            let pf = Colorf {
+                r: (p[0] as f64 + threshold).clamp(0.0, 255.0),
+                g: (p[1] as f64 + threshold).clamp(0.0, 255.0),
+                b: (p[2] as f64 + threshold).clamp(0.0, 255.0),
+                a: p[3] as f64, // Usually we don't dither alpha
+            };
+
+            let best_idx = self.find_nearest(&pf, exo_palette_f);
+            let c = exo_palette[best_idx];
+            Rgba([c.r, c.g, c.b, c.a])
+        });
+
+        DynamicImage::ImageRgba8(quantized)
     }
 
     fn find_nearest(&self, p: &Colorf, palette: &[Colorf]) -> usize {

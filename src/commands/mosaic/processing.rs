@@ -3,7 +3,7 @@ use image::{DynamicImage, GenericImageView};
 
 use super::MosaicMode;
 use crate::Result;
-use crate::commands::palette::Palette;
+use crate::commands::palette::{DitherMethod, Palette};
 
 /// Calculate the dimensions of the image after resizing according to max_long_side.
 fn calculate_dimensions(width: u32, height: u32, max_long_side: u32) -> (u32, u32) {
@@ -38,13 +38,23 @@ pub fn resize_to_max_long_side(
 
 /// Quantizes the colors of an image to the specified number of colors.
 /// Reuses the unified palette logic from the palette module.
-pub fn quantize_colors(img: DynamicImage, colors: u8, mode: MosaicMode) -> Result<DynamicImage> {
+pub fn quantize_colors(
+    img: DynamicImage,
+    colors: u8,
+    mode: MosaicMode,
+    dither: Option<DitherMethod>,
+) -> Result<DynamicImage> {
     // 1. Generate palette (sampled for speed)
     let palette = Palette::extract(&img, colors, true)?;
 
     // 2. Apply palette to the full image
-    let use_dithering = matches!(mode, MosaicMode::Smooth);
-    Ok(palette.apply(img, use_dithering))
+    // Use the provided dither method if it exists, otherwise fall back to mode-based default
+    let dither_method = dither.unwrap_or(match mode {
+        MosaicMode::Smooth => DitherMethod::FloydSteinberg,
+        MosaicMode::Sharp => DitherMethod::None,
+    });
+
+    palette.apply(img, dither_method)
 }
 
 #[cfg(test)]
@@ -94,11 +104,28 @@ mod tests {
         img_buf.put_pixel(1, 1, Rgba([255, 255, 255, 255]));
         let img = DynamicImage::ImageRgba8(img_buf);
 
-        let result = quantize_colors(img, 2, MosaicMode::Sharp).unwrap();
+        let result = quantize_colors(img, 2, MosaicMode::Sharp, None).unwrap();
         assert_eq!(result.dimensions(), (2, 2));
 
         let rgba = result.into_rgba8();
         let unique_colors: std::collections::HashSet<_> = rgba.pixels().map(|p| p.0).collect();
         assert!(unique_colors.len() <= 2);
+    }
+
+    #[test]
+    fn test_quantize_colors_smooth_mode() {
+        let mut img_buf = ImageBuffer::new(4, 4);
+        for (x, y, pixel) in img_buf.enumerate_pixels_mut() {
+            *pixel = Rgba([(x * 60) as u8, (y * 60) as u8, 128, 255]);
+        }
+        let img = DynamicImage::ImageRgba8(img_buf);
+
+        // check if the dimensions are not changed
+        let result = quantize_colors(img, 4, MosaicMode::Smooth, None).unwrap();
+        assert_eq!(result.dimensions(), (4, 4));
+
+        let rgba = result.into_rgba8();
+        let unique_colors: std::collections::HashSet<_> = rgba.pixels().map(|p| p.0).collect();
+        assert!(unique_colors.len() <= 4);
     }
 }

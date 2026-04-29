@@ -2,7 +2,7 @@ use clap::Args;
 use image::open;
 use std::path::PathBuf;
 
-use super::Palette;
+use super::{DitherMethod, Palette};
 use crate::Result;
 
 #[derive(Args, Debug)]
@@ -19,9 +19,9 @@ pub struct ApplyArgs {
     #[arg(short, long)]
     pub output: PathBuf,
 
-    /// Use dithering to represent gradients (not yet implemented)
-    #[arg(short, long)]
-    pub dither: bool,
+    /// Dithering method to use
+    #[arg(short, long, default_value = "none")]
+    pub method: DitherMethod,
 }
 
 pub fn run(args: ApplyArgs) -> Result<()> {
@@ -33,11 +33,14 @@ pub fn run(args: ApplyArgs) -> Result<()> {
     let img = open(&args.input)?;
 
     // 3. Apply the palette
-    let result = palette.apply(img, args.dither);
+    let result = palette.apply(img, args.method)?;
 
     // 4. Save the result
     result.save(&args.output)?;
-    println!("Applied palette saved to {:?}", args.output);
+    println!(
+        "Applied palette (method: {:?}) saved to {:?}",
+        args.method, args.output
+    );
 
     Ok(())
 }

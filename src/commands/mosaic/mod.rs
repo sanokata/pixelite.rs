@@ -8,6 +8,7 @@ use clap::{Args, ValueEnum};
 use image::{ImageFormat, open};
 
 use crate::Result;
+use crate::commands::palette::DitherMethod;
 
 #[derive(ValueEnum, Clone, Debug, Default)]
 pub enum MosaicMode {
@@ -40,6 +41,10 @@ pub struct MosaicArgs {
     #[arg(short = 'm', long, value_enum, default_value_t = MosaicMode::Sharp)]
     pub mode: MosaicMode,
 
+    /// Optional dithering method (overrides mode-based default)
+    #[arg(short, long)]
+    pub dither: Option<DitherMethod>,
+
     /// Whether to crop the input image to a square centered on the middle before processing.
     #[arg(long, default_value_t = false)]
     pub crop: bool,
@@ -58,7 +63,8 @@ pub fn run(args: MosaicArgs) -> Result<()> {
     // 2. resize the original image to the desired size
     let resized = processing::resize_to_max_long_side(prepared, args.size, &args.mode)?;
     // 3. quantize the colors of the resized image to the desired number of colors
-    let quantized = processing::quantize_colors(resized, args.colors, args.mode.clone())?;
+    let quantized =
+        processing::quantize_colors(resized, args.colors, args.mode.clone(), args.dither)?;
     // 4. postprocess the quantized image
     let postprocessed = postprocessing::postprocess(quantized, &args.mode)?;
     // 5. upscale the result if requested
