@@ -1,4 +1,5 @@
 pub mod extract;
+pub mod apply;
 
 use std::path::Path;
 use clap::{Args, Subcommand};
@@ -107,6 +108,62 @@ impl Palette {
         DynamicImage::ImageRgba8(quantized)
     }
 
+    /// Loads a palette from a file (.gpl or .png).
+    pub fn load(path: &Path) -> Result<Self> {
+        let extension = path.extension()
+            .and_then(|s| s.to_str())
+            .map(|s| s.to_lowercase())
+            .unwrap_or_default();
+
+        if extension == "gpl" {
+            Self::load_from_gpl(path)
+        } else {
+            Self::load_from_png(path)
+        }
+    }
+
+    fn load_from_gpl(path: &Path) -> Result<Self> {
+        use std::io::{BufRead, BufReader};
+        let file = std::fs::File::open(path)?;
+        let reader = BufReader::new(file);
+        let mut colors = Vec::new();
+
+        for line in reader.lines() {
+            let line = line?;
+            if line.starts_with('#') || line.is_empty() || line.starts_with("GIMP") || line.starts_with("Name") || line.starts_with("Columns") {
+                continue;
+            }
+
+            let parts: Vec<&str> = line.split_whitespace().collect();
+            if parts.len() >= 3 {
+                let r = parts[0].parse::<u8>().unwrap_or(0);
+                let g = parts[1].parse::<u8>().unwrap_or(0);
+                let b = parts[2].parse::<u8>().unwrap_or(0);
+                colors.push(Rgba([r, g, b, 255]));
+            }
+        }
+
+        if colors.is_empty() {
+            return Err("No colors found in GPL file".into());
+        }
+
+        Ok(Palette(colors))
+    }
+
+    fn load_from_png(path: &Path) -> Result<Self> {
+        let img = image::open(path)?;
+        let mut colors = Vec::new();
+        let mut seen = std::collections::HashSet::new();
+
+        for (_, _, pixel) in img.pixels() {
+            if seen.insert(pixel.0) {
+                colors.push(pixel);
+            }
+        }
+
+        Ok(Palette(colors))
+    }
+
     pub fn save(&self, path: &Path) -> Result<()> {
         match PaletteFormat::from_path(path) {
             PaletteFormat::Gpl => self.save_as_gpl(path),
@@ -152,11 +209,14 @@ pub struct PaletteArgs {
 pub enum PaletteCommand {
     /// Extract color palette from an image
     Extract(extract::ExtractArgs),
+    /// Apply a palette to an image
+    Apply(apply::ApplyArgs),
 }
 
 pub fn run(args: PaletteArgs) -> Result<()> {
     match args.command {
         PaletteCommand::Extract(args) => extract::run(args),
+        PaletteCommand::Apply(args) => apply::run(args),
     }
 }
 
@@ -168,5 +228,20 @@ mod tests {
     fn test_palette_format_detection() {
         assert_eq!(PaletteFormat::from_path(Path::new("test.gpl")), PaletteFormat::Gpl);
         assert_eq!(PaletteFormat::from_path(Path::new("test.png")), PaletteFormat::Png);
+    }
+
+    #[test]
+    fn test_load_palette_from_gpl() {
+        let content = "GIMP Palette\nName: test\n#\n255 0 0\tRed\n0 255 0\tGreen\n";
+        let temp_dir = std::env::temp_dir();
+        let path = temp_dir.join("test_load.gpl");
+        std::fs::write(&path, content).unwrap();
+
+        let palette = Palette::load(&path).unwrap();
+        assert_eq!(palette.0.len(), 2);
+        assert_eq!(palette.0[0], Rgba([255, 0, 0, 255]));
+        assert_eq!(palette.0[1], Rgba([0, 255, 0, 255]));
+
+        std::fs::remove_file(path).unwrap();
     }
 }
