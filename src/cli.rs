@@ -23,4 +23,7 @@ pub enum Commands {
 
     /// Extract or manage color palettes from images
     Palette(commands::palette::PaletteArgs),
+
+    /// Assemble multiple images into a spritesheet
+    Sheet(commands::sheet::SheetArgs),
 }

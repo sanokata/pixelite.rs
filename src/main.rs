@@ -14,6 +14,8 @@ fn main() -> pixelite::Result<()> {
         Commands::Mosaic(args) => commands::mosaic::run(args)?,
         // extract color palette from image
         Commands::Palette(args) => commands::palette::run(args)?,
+        // assemble images into a spritesheet
+        Commands::Sheet(args) => commands::sheet::run(args)?,
     }
 
     Ok(())
