@@ -56,7 +56,7 @@ pub struct MosaicArgs {
 }
 
 pub fn run(args: MosaicArgs) -> Result<()> {
-    let inputs = expand_inputs(&args.input)?;
+    let inputs = super::expand_inputs(&args.input)?;
     if inputs.len() > 1 && !args.output.contains('{') {
         return Err(
             "multiple input files require an output pattern containing {stem}, {name}, or {n}"
@@ -70,26 +70,15 @@ pub fn run(args: MosaicArgs) -> Result<()> {
     Ok(())
 }
 
-fn expand_inputs(inputs: &[String]) -> Result<Vec<PathBuf>> {
-    let mut paths = Vec::new();
-    for pattern in inputs {
-        let mut matched: Vec<PathBuf> = glob::glob(pattern)
-            .map_err(|e| format!("invalid glob pattern '{}': {}", pattern, e))?
-            .filter_map(|r| r.ok())
-            .collect();
-        if matched.is_empty() {
-            paths.push(PathBuf::from(pattern));
-        } else {
-            matched.sort();
-            paths.extend(matched);
-        }
-    }
-    Ok(paths)
-}
-
 fn resolve_output(pattern: &str, input: &Path, n: usize) -> PathBuf {
-    let stem = input.file_stem().and_then(|s| s.to_str()).unwrap_or("output");
-    let name = input.file_name().and_then(|s| s.to_str()).unwrap_or("output");
+    let stem = input
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("output");
+    let name = input
+        .file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or("output");
     PathBuf::from(
         pattern
             .replace("{stem}", stem)
@@ -156,20 +145,5 @@ mod tests {
     fn test_resolve_output_multiple_placeholders() {
         let result = resolve_output("out/{n}_{stem}.png", Path::new("sprites/hero.png"), 3);
         assert_eq!(result, PathBuf::from("out/3_hero.png"));
-    }
-
-    #[test]
-    fn test_expand_inputs_invalid_glob_returns_error() {
-        let result = expand_inputs(&["[invalid".to_string()]);
-        assert!(result.is_err());
-        let msg = result.unwrap_err().to_string();
-        assert!(msg.contains("[invalid"), "error should mention the pattern");
-    }
-
-    #[test]
-    fn test_expand_inputs_no_match_returns_literal() {
-        // A well-formed glob that matches nothing falls back to the literal string as a PathBuf
-        let result = expand_inputs(&["__nonexistent_dir__/*.png".to_string()]).unwrap();
-        assert_eq!(result, vec![PathBuf::from("__nonexistent_dir__/*.png")]);
     }
 }
