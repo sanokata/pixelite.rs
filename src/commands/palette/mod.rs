@@ -7,6 +7,18 @@ use exoquant::{Color, Colorf, convert_to_indexed, ditherer, optimizer};
 use image::{DynamicImage, GenericImageView, ImageBuffer, ImageFormat, Rgba};
 use std::path::Path;
 
+// Floyd-Steinberg error diffusion weights (fractions of 1/16)
+const FS_RIGHT: f64 = 7.0 / 16.0;
+const FS_DOWN_LEFT: f64 = 3.0 / 16.0;
+const FS_DOWN: f64 = 5.0 / 16.0;
+const FS_DOWN_RIGHT: f64 = 1.0 / 16.0;
+
+// Bayer 4x4 ordered dithering parameters:
+// BAYER_CENTER shifts the 0-15 matrix range to be symmetric around zero.
+// BAYER_SCALE maps the centered range to the full byte scale.
+const BAYER_CENTER: f64 = 7.5;
+const BAYER_SCALE: f64 = 255.0 / 16.0;
+
 /// A structure representing a color palette.
 #[derive(Debug, Clone)]
 pub struct Palette(pub Vec<Rgba<u8>>);
@@ -40,6 +52,51 @@ impl PaletteFormat {
             _ => PaletteFormat::Png,
         }
     }
+}
+
+/// Finds the palette entry closest to `p` using squared RGBA distance (f64).
+/// Used by Floyd-Steinberg where accumulated error produces fractional values.
+fn find_nearest(p: &Colorf, palette: &[Colorf]) -> usize {
+    let mut best_idx = 0;
+    let mut min_dist = f64::MAX;
+    for (i, cf) in palette.iter().enumerate() {
+        let dr = p.r - cf.r;
+        let dg = p.g - cf.g;
+        let db = p.b - cf.b;
+        let da = p.a - cf.a;
+        let dist = dr * dr + dg * dg + db * db + da * da;
+        if dist < min_dist {
+            min_dist = dist;
+            best_idx = i;
+        }
+    }
+    best_idx
+}
+
+/// Finds the palette entry closest to `p` using squared RGBA distance (i32).
+/// Each component of `p` must be in [0, 255]. Avoids f64 overhead when no
+/// fractional error is present (nearest-neighbor and ordered dithering).
+fn find_nearest_int(p: [i32; 4], palette: &[Color]) -> usize {
+    palette
+        .iter()
+        .enumerate()
+        .min_by_key(|(_, c)| {
+            let dr = p[0] - c.r as i32;
+            let dg = p[1] - c.g as i32;
+            let db = p[2] - c.b as i32;
+            let da = p[3] - c.a as i32;
+            dr * dr + dg * dg + db * db + da * da
+        })
+        .map(|(i, _)| i)
+        .unwrap_or(0)
+}
+
+/// Accumulates a weighted error diff into one slot of a Colorf error buffer.
+fn add_error(buf: &mut [Colorf], idx: usize, diff: Colorf, w: f64) {
+    buf[idx].r += diff.r * w;
+    buf[idx].g += diff.g * w;
+    buf[idx].b += diff.b * w;
+    buf[idx].a += diff.a * w;
 }
 
 impl Palette {
@@ -79,6 +136,29 @@ impl Palette {
     /// Applies this palette to an image using the specified dithering method.
     pub fn apply(&self, img: DynamicImage, method: DitherMethod) -> Result<DynamicImage> {
         let exo_palette = self.to_exoquant_colors();
+        Ok(match method {
+            DitherMethod::None => self.apply_nearest(img, &exo_palette),
+            DitherMethod::FloydSteinberg => self.apply_floyd_steinberg(img, &exo_palette),
+            DitherMethod::Ordered => self.apply_ordered(img, &exo_palette),
+        })
+    }
+
+    fn apply_nearest(&self, img: DynamicImage, exo_palette: &[Color]) -> DynamicImage {
+        let (width, height) = img.dimensions();
+        let quantized = ImageBuffer::from_fn(width, height, |x, y| {
+            let p = img.get_pixel(x, y);
+            let pi = [p[0] as i32, p[1] as i32, p[2] as i32, p[3] as i32];
+            let c = exo_palette[find_nearest_int(pi, exo_palette)];
+            Rgba([c.r, c.g, c.b, c.a])
+        });
+        DynamicImage::ImageRgba8(quantized)
+    }
+
+    fn apply_floyd_steinberg(&self, img: DynamicImage, exo_palette: &[Color]) -> DynamicImage {
+        let (width, height) = img.dimensions();
+        let mut output = ImageBuffer::new(width, height);
+
+        // f64 palette needed here because accumulated error produces fractional values.
         let exo_palette_f: Vec<Colorf> = exo_palette
             .iter()
             .map(|c| Colorf {
@@ -89,70 +169,19 @@ impl Palette {
             })
             .collect();
 
-        match method {
-            DitherMethod::None => Ok(self.apply_nearest(img, &exo_palette, &exo_palette_f)),
-            DitherMethod::FloydSteinberg => {
-                Ok(self.apply_floyd_steinberg(img, &exo_palette, &exo_palette_f))
-            }
-            DitherMethod::Ordered => Ok(self.apply_ordered(img, &exo_palette, &exo_palette_f)),
-        }
-    }
-
-    fn apply_nearest(
-        &self,
-        img: DynamicImage,
-        exo_palette: &[Color],
-        exo_palette_f: &[Colorf],
-    ) -> DynamicImage {
-        let (width, height) = img.dimensions();
-        let quantized = ImageBuffer::from_fn(width, height, |x, y| {
-            let p = img.get_pixel(x, y);
-            let pf = Colorf {
-                r: p[0] as f64,
-                g: p[1] as f64,
-                b: p[2] as f64,
-                a: p[3] as f64,
-            };
-            let best_idx = self.find_nearest(&pf, exo_palette_f);
-            let c = exo_palette[best_idx];
-            Rgba([c.r, c.g, c.b, c.a])
-        });
-        DynamicImage::ImageRgba8(quantized)
-    }
-
-    fn apply_floyd_steinberg(
-        &self,
-        img: DynamicImage,
-        exo_palette: &[Color],
-        exo_palette_f: &[Colorf],
-    ) -> DynamicImage {
-        let (width, height) = img.dimensions();
-        let mut output = ImageBuffer::new(width, height);
-
-        let mut curr_error = vec![
-            Colorf {
-                r: 0.0,
-                g: 0.0,
-                b: 0.0,
-                a: 0.0
-            };
-            width as usize
-        ];
-        let mut next_error = vec![
-            Colorf {
-                r: 0.0,
-                g: 0.0,
-                b: 0.0,
-                a: 0.0
-            };
-            width as usize
-        ];
+        let zero = Colorf {
+            r: 0.0,
+            g: 0.0,
+            b: 0.0,
+            a: 0.0,
+        };
+        let mut curr_error = vec![zero; width as usize];
+        let mut next_error = vec![zero; width as usize];
 
         for y in 0..height {
             for x in 0..width {
                 let p = img.get_pixel(x, y);
                 let err = curr_error[x as usize];
-
                 let pf = Colorf {
                     r: (p[0] as f64 + err.r).clamp(0.0, 255.0),
                     g: (p[1] as f64 + err.g).clamp(0.0, 255.0),
@@ -160,7 +189,7 @@ impl Palette {
                     a: (p[3] as f64 + err.a).clamp(0.0, 255.0),
                 };
 
-                let best_idx = self.find_nearest(&pf, exo_palette_f);
+                let best_idx = find_nearest(&pf, &exo_palette_f);
                 let c = exo_palette[best_idx];
                 output.put_pixel(x, y, Rgba([c.r, c.g, c.b, c.a]));
 
@@ -172,52 +201,27 @@ impl Palette {
                 };
 
                 if x + 1 < width {
-                    curr_error[(x + 1) as usize].r += diff.r * 7.0 / 16.0;
-                    curr_error[(x + 1) as usize].g += diff.g * 7.0 / 16.0;
-                    curr_error[(x + 1) as usize].b += diff.b * 7.0 / 16.0;
-                    curr_error[(x + 1) as usize].a += diff.a * 7.0 / 16.0;
+                    add_error(&mut curr_error, (x + 1) as usize, diff, FS_RIGHT);
                 }
                 if y + 1 < height {
                     if x > 0 {
-                        next_error[(x - 1) as usize].r += diff.r * 3.0 / 16.0;
-                        next_error[(x - 1) as usize].g += diff.g * 3.0 / 16.0;
-                        next_error[(x - 1) as usize].b += diff.b * 3.0 / 16.0;
-                        next_error[(x - 1) as usize].a += diff.a * 3.0 / 16.0;
+                        add_error(&mut next_error, (x - 1) as usize, diff, FS_DOWN_LEFT);
                     }
-                    next_error[x as usize].r += diff.r * 5.0 / 16.0;
-                    next_error[x as usize].g += diff.g * 5.0 / 16.0;
-                    next_error[x as usize].b += diff.b * 5.0 / 16.0;
-                    next_error[x as usize].a += diff.a * 5.0 / 16.0;
+                    add_error(&mut next_error, x as usize, diff, FS_DOWN);
                     if x + 1 < width {
-                        next_error[(x + 1) as usize].r += diff.r * 1.0 / 16.0;
-                        next_error[(x + 1) as usize].g += diff.g * 1.0 / 16.0;
-                        next_error[(x + 1) as usize].b += diff.b * 1.0 / 16.0;
-                        next_error[(x + 1) as usize].a += diff.a * 1.0 / 16.0;
+                        add_error(&mut next_error, (x + 1) as usize, diff, FS_DOWN_RIGHT);
                     }
                 }
             }
             std::mem::swap(&mut curr_error, &mut next_error);
-            for err in next_error.iter_mut() {
-                *err = Colorf {
-                    r: 0.0,
-                    g: 0.0,
-                    b: 0.0,
-                    a: 0.0,
-                };
-            }
+            next_error.iter_mut().for_each(|e| *e = zero);
         }
 
         DynamicImage::ImageRgba8(output)
     }
 
-    fn apply_ordered(
-        &self,
-        img: DynamicImage,
-        exo_palette: &[Color],
-        exo_palette_f: &[Colorf],
-    ) -> DynamicImage {
+    fn apply_ordered(&self, img: DynamicImage, exo_palette: &[Color]) -> DynamicImage {
         let (width, height) = img.dimensions();
-        // 4x4 Bayer Matrix
         let bayer: [[f64; 4]; 4] = [
             [0.0, 8.0, 2.0, 10.0],
             [12.0, 4.0, 14.0, 6.0],
@@ -227,41 +231,19 @@ impl Palette {
 
         let quantized = ImageBuffer::from_fn(width, height, |x, y| {
             let p = img.get_pixel(x, y);
-            // Bayer matrix affects the color by adding a positional offset
-            // Scale the 0-15 matrix value to a centered threshold: (value - 7.5) * (255 / 16)
-            let threshold = (bayer[(y % 4) as usize][(x % 4) as usize] - 7.5) * (255.0 / 16.0);
-
-            let pf = Colorf {
-                r: (p[0] as f64 + threshold).clamp(0.0, 255.0),
-                g: (p[1] as f64 + threshold).clamp(0.0, 255.0),
-                b: (p[2] as f64 + threshold).clamp(0.0, 255.0),
-                a: p[3] as f64, // Usually we don't dither alpha
-            };
-
-            let best_idx = self.find_nearest(&pf, exo_palette_f);
-            let c = exo_palette[best_idx];
+            let threshold =
+                (bayer[(y % 4) as usize][(x % 4) as usize] - BAYER_CENTER) * BAYER_SCALE;
+            let pi = [
+                (p[0] as f64 + threshold).clamp(0.0, 255.0) as i32,
+                (p[1] as f64 + threshold).clamp(0.0, 255.0) as i32,
+                (p[2] as f64 + threshold).clamp(0.0, 255.0) as i32,
+                p[3] as i32, // alpha is not dithered
+            ];
+            let c = exo_palette[find_nearest_int(pi, exo_palette)];
             Rgba([c.r, c.g, c.b, c.a])
         });
 
         DynamicImage::ImageRgba8(quantized)
-    }
-
-    fn find_nearest(&self, p: &Colorf, palette: &[Colorf]) -> usize {
-        let mut best_idx = 0;
-        let mut min_dist = f64::MAX;
-        for (i, cf) in palette.iter().enumerate() {
-            let dr = p.r - cf.r;
-            let dg = p.g - cf.g;
-            let db = p.b - cf.b;
-            let da = p.a - cf.a;
-            let dist = dr * dr + dg * dg + db * db + da * da;
-
-            if dist < min_dist {
-                min_dist = dist;
-                best_idx = i;
-            }
-        }
-        best_idx
     }
 
     pub fn load(path: &Path) -> Result<Self> {
@@ -460,10 +442,7 @@ mod tests {
 
     #[test]
     fn test_to_exoquant_colors() {
-        let palette = Palette(vec![
-            Rgba([255, 0, 128, 200]),
-            Rgba([10, 20, 30, 255]),
-        ]);
+        let palette = Palette(vec![Rgba([255, 0, 128, 200]), Rgba([10, 20, 30, 255])]);
         let exo = palette.to_exoquant_colors();
         assert_eq!(exo.len(), 2);
         assert_eq!((exo[0].r, exo[0].g, exo[0].b, exo[0].a), (255, 0, 128, 200));
@@ -506,10 +485,7 @@ mod tests {
 
     #[test]
     fn test_apply_nearest_selects_closest_color() {
-        let palette = Palette(vec![
-            Rgba([255, 0, 0, 255]),
-            Rgba([0, 0, 255, 255]),
-        ]);
+        let palette = Palette(vec![Rgba([255, 0, 0, 255]), Rgba([0, 0, 255, 255])]);
         let mut buf = ImageBuffer::new(2, 1);
         buf.put_pixel(0, 0, Rgba([200, 0, 0, 255])); // closer to red
         buf.put_pixel(1, 0, Rgba([0, 0, 200, 255])); // closer to blue
@@ -523,10 +499,7 @@ mod tests {
 
     #[test]
     fn test_apply_floyd_steinberg_output_in_palette() {
-        let palette = Palette(vec![
-            Rgba([0, 0, 0, 255]),
-            Rgba([255, 255, 255, 255]),
-        ]);
+        let palette = Palette(vec![Rgba([0, 0, 0, 255]), Rgba([255, 255, 255, 255])]);
         let mut buf = ImageBuffer::new(4, 4);
         for (x, y, pixel) in buf.enumerate_pixels_mut() {
             let v = ((x + y) * 32) as u8;
@@ -548,10 +521,7 @@ mod tests {
 
     #[test]
     fn test_apply_ordered_output_in_palette() {
-        let palette = Palette(vec![
-            Rgba([0, 0, 0, 255]),
-            Rgba([255, 255, 255, 255]),
-        ]);
+        let palette = Palette(vec![Rgba([0, 0, 0, 255]), Rgba([255, 255, 255, 255])]);
         let mut buf = ImageBuffer::new(4, 4);
         for pixel in buf.pixels_mut() {
             *pixel = Rgba([128, 128, 128, 255]);

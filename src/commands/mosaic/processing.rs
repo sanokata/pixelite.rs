@@ -104,12 +104,12 @@ mod tests {
         img_buf.put_pixel(1, 1, Rgba([255, 255, 255, 255]));
         let img = DynamicImage::ImageRgba8(img_buf);
 
-        let result = quantize_colors(img, 2, MosaicMode::Sharp, None).unwrap();
-        assert_eq!(result.dimensions(), (2, 2));
-
-        let rgba = result.into_rgba8();
+        let rgba = quantize_colors(img, 2, MosaicMode::Sharp, None)
+            .unwrap()
+            .into_rgba8();
         let unique_colors: std::collections::HashSet<_> = rgba.pixels().map(|p| p.0).collect();
-        assert!(unique_colors.len() <= 2);
+        // 4 maximally distinct input colors grouped into exactly 2 clusters by kmeans
+        assert_eq!(unique_colors.len(), 2);
     }
 
     #[test]
@@ -120,13 +120,13 @@ mod tests {
         }
         let img = DynamicImage::ImageRgba8(img_buf);
 
-        // check if the dimensions are not changed
-        let result = quantize_colors(img, 4, MosaicMode::Smooth, None).unwrap();
-        assert_eq!(result.dimensions(), (4, 4));
-
-        let rgba = result.into_rgba8();
+        let rgba = quantize_colors(img, 4, MosaicMode::Smooth, None)
+            .unwrap()
+            .into_rgba8();
         let unique_colors: std::collections::HashSet<_> = rgba.pixels().map(|p| p.0).collect();
-        assert!(unique_colors.len() <= 4);
+        // 16 distinct inputs spread across 4 quadrants; FloydSteinberg dithering
+        // distributes error such that all 4 palette entries appear in the output
+        assert_eq!(unique_colors.len(), 4);
     }
 
     #[test]
@@ -147,19 +147,34 @@ mod tests {
 
     #[test]
     fn test_quantize_colors_dither_override() {
-        // Sharp mode defaults to DitherMethod::None, but an explicit override must be accepted
-        let mut img_buf = ImageBuffer::new(4, 4);
-        for pixel in img_buf.pixels_mut() {
-            *pixel = Rgba([128, 128, 128, 255]);
-        }
-        let img = DynamicImage::ImageRgba8(img_buf);
+        // Ordered dithering must produce visually different output than the Sharp default (None)
+        let make_img = || {
+            let mut buf = ImageBuffer::new(4, 4);
+            for (x, y, pixel) in buf.enumerate_pixels_mut() {
+                let v = ((x + y) * 32) as u8; // grayscale gradient 0..192
+                *pixel = Rgba([v, v, v, 255]);
+            }
+            DynamicImage::ImageRgba8(buf)
+        };
 
-        let result =
-            quantize_colors(img, 2, MosaicMode::Sharp, Some(DitherMethod::Ordered)).unwrap();
-        assert_eq!(result.dimensions(), (4, 4));
+        let no_dither: Vec<_> = quantize_colors(make_img(), 2, MosaicMode::Sharp, None)
+            .unwrap()
+            .into_rgba8()
+            .pixels()
+            .map(|p| p.0)
+            .collect();
+        let with_ordered: Vec<_> = quantize_colors(
+            make_img(),
+            2,
+            MosaicMode::Sharp,
+            Some(DitherMethod::Ordered),
+        )
+        .unwrap()
+        .into_rgba8()
+        .pixels()
+        .map(|p| p.0)
+        .collect();
 
-        let rgba = result.into_rgba8();
-        let unique_colors: std::collections::HashSet<_> = rgba.pixels().map(|p| p.0).collect();
-        assert!(unique_colors.len() <= 2);
+        assert_ne!(no_dither, with_ordered);
     }
 }

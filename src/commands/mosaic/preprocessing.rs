@@ -41,7 +41,7 @@ pub fn crop_to_square(mut img: DynamicImage, should_crop: bool) -> DynamicImage 
 /// Sharp mode: keep edges intact; only binarize alpha so quantization
 /// does not create semi-transparent fringe pixels.
 fn preprocess_sharp(img: DynamicImage) -> Result<DynamicImage> {
-    // infalliable but returning Result for API uniformity with preprocess_background
+    // infallible but returning Result for API uniformity with preprocess_smooth
     Ok(binarize_alpha(img))
 }
 

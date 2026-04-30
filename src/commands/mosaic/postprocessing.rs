@@ -1,9 +1,7 @@
 use image::{DynamicImage, Rgba};
-use std::collections::HashMap;
-
-use crate::Result;
 
 use super::MosaicMode;
+use crate::Result;
 
 /// Post-processes the image after quantization based on the selected generation mode.
 ///
@@ -12,16 +10,13 @@ use super::MosaicMode;
 pub fn postprocess(img: DynamicImage, mode: &MosaicMode) -> Result<DynamicImage> {
     match mode {
         MosaicMode::Sharp => {
-            let img = remove_orphan_pixels(img)?;
-            let img = apply_pixel_perfection(img)?;
-            let img = add_outlines(img)?;
-            let img = remove_anti_aliasing(img)?;
+            let img = remove_orphan_pixels(img);
+            let img = apply_pixel_perfection(img);
+            let img = add_outlines(img);
+            let img = remove_anti_aliasing(img);
             Ok(img)
         }
-        MosaicMode::Smooth => {
-            let img = remove_anti_aliasing(img)?;
-            Ok(img)
-        }
+        MosaicMode::Smooth => Ok(remove_anti_aliasing(img)),
     }
 }
 
@@ -39,7 +34,7 @@ pub fn upscale(img: DynamicImage, factor: u32) -> DynamicImage {
 
 /// Removes isolated "orphan" pixels by replacing them with the majority color of their neighbors.
 /// A pixel is considered an orphan if none of its 8 neighbors have the same color.
-fn remove_orphan_pixels(img: DynamicImage) -> Result<DynamicImage> {
+fn remove_orphan_pixels(img: DynamicImage) -> DynamicImage {
     let rgba = img.into_rgba8();
     let (width, height) = rgba.dimensions();
     let mut output = rgba.clone();
@@ -49,18 +44,16 @@ fn remove_orphan_pixels(img: DynamicImage) -> Result<DynamicImage> {
             if !is_orphan(&rgba, x, y) {
                 continue;
             }
-
-            let majority_color = find_majority_color(&rgba, x, y);
-            output.put_pixel(x, y, majority_color);
+            output.put_pixel(x, y, find_majority_color(&rgba, x, y));
         }
     }
 
-    Ok(DynamicImage::ImageRgba8(output))
+    DynamicImage::ImageRgba8(output)
 }
 
 /// Corrects "staircase" patterns (L-shapes) to make diagonal lines look smoother.
 /// This is a common technique in manual pixel art cleaning.
-fn apply_pixel_perfection(img: DynamicImage) -> Result<DynamicImage> {
+fn apply_pixel_perfection(img: DynamicImage) -> DynamicImage {
     apply_filter(img, |rgba, x, y, p, [u, d, l, r, ul, ur, dl, dr]| {
         let targets = [
             (l, u, r, d, ul), // Top-left L
@@ -86,7 +79,7 @@ fn apply_pixel_perfection(img: DynamicImage) -> Result<DynamicImage> {
 
 /// Adds a 1-pixel black outline to any opaque pixel that is adjacent to a transparent area.
 /// This is specifically used in Sharp mode to make the shape stand out.
-fn add_outlines(img: DynamicImage) -> Result<DynamicImage> {
+fn add_outlines(img: DynamicImage) -> DynamicImage {
     let rgba = img.into_rgba8();
     let (width, height) = rgba.dimensions();
     let mut output = rgba.clone();
@@ -110,12 +103,12 @@ fn add_outlines(img: DynamicImage) -> Result<DynamicImage> {
         }
     }
 
-    Ok(DynamicImage::ImageRgba8(output))
+    DynamicImage::ImageRgba8(output)
 }
 
 /// Removes anti-aliasing artifacts by detecting pixels that are sandwiched between
 /// two neighbors of the same color and replacing the middle pixel with that color.
-fn remove_anti_aliasing(img: DynamicImage) -> Result<DynamicImage> {
+fn remove_anti_aliasing(img: DynamicImage) -> DynamicImage {
     apply_filter(img, |_rgba, _x, _y, p, [u, d, l, r, ul, ur, dl, dr]| {
         [(l, r), (u, d), (ul, dr), (ur, dl)]
             .into_iter()
@@ -125,7 +118,7 @@ fn remove_anti_aliasing(img: DynamicImage) -> Result<DynamicImage> {
 
 /// A generic utility to apply a pattern-matching filter across the image.
 /// Skips the 1-pixel border of the image as it requires a full 3x3 neighborhood.
-fn apply_filter<F>(img: DynamicImage, filter: F) -> Result<DynamicImage>
+fn apply_filter<F>(img: DynamicImage, filter: F) -> DynamicImage
 where
     F: Fn(&image::RgbaImage, u32, u32, &Rgba<u8>, [&Rgba<u8>; 8]) -> Option<Rgba<u8>>,
 {
@@ -144,61 +137,56 @@ where
         }
     }
 
-    Ok(DynamicImage::ImageRgba8(output))
+    DynamicImage::ImageRgba8(output)
+}
+
+/// Calls `f` for each of the (up to 8) in-bounds neighbors of the pixel at (x, y).
+fn for_each_neighbor(img: &image::RgbaImage, x: u32, y: u32, mut f: impl FnMut(Rgba<u8>)) {
+    let (w, h) = (img.width() as i32, img.height() as i32);
+    for dy in -1i32..=1 {
+        for dx in -1i32..=1 {
+            if (dx, dy) == (0, 0) {
+                continue;
+            }
+            let (nx, ny) = (x as i32 + dx, y as i32 + dy);
+            if nx >= 0 && nx < w && ny >= 0 && ny < h {
+                f(*img.get_pixel(nx as u32, ny as u32));
+            }
+        }
+    }
 }
 
 /// Checks if a pixel at (x, y) has no neighbors of the same color.
 fn is_orphan(img: &image::RgbaImage, x: u32, y: u32) -> bool {
-    let (width, height) = img.dimensions();
-    let center_pixel = img.get_pixel(x, y);
-
-    for dy in -1..=1 {
-        for dx in -1..=1 {
-            if dx == 0 && dy == 0 {
-                continue;
-            }
-
-            let nx = x as i32 + dx;
-            let ny = y as i32 + dy;
-
-            if nx >= 0
-                && nx < width as i32
-                && ny >= 0
-                && ny < height as i32
-                && img.get_pixel(nx as u32, ny as u32) == center_pixel
-            {
-                return false;
-            }
+    let center = *img.get_pixel(x, y);
+    let mut found = false;
+    for_each_neighbor(img, x, y, |p| {
+        if p == center {
+            found = true;
         }
-    }
-    true
+    });
+    !found
 }
 
-/// Finds the most frequent color among the 8 neighbors of the pixel at (x, y).
+/// Finds the most frequent color among the (up to 8) neighbors of the pixel at (x, y).
 fn find_majority_color(img: &image::RgbaImage, x: u32, y: u32) -> Rgba<u8> {
-    let (width, height) = img.dimensions();
-    let mut counts: HashMap<Rgba<u8>, u32> = HashMap::with_capacity(8);
+    // Fixed-size array avoids HashMap overhead for at most 8 entries.
+    let mut counts: [(Rgba<u8>, u8); 8] = [(Rgba([0, 0, 0, 0]), 0); 8];
+    let mut len = 0usize;
 
-    for dy in -1..=1 {
-        for dx in -1..=1 {
-            if dx == 0 && dy == 0 {
-                continue;
-            }
-
-            let nx = x as i32 + dx;
-            let ny = y as i32 + dy;
-
-            if nx >= 0 && nx < width as i32 && ny >= 0 && ny < height as i32 {
-                let neighbor_pixel = img.get_pixel(nx as u32, ny as u32);
-                *counts.entry(*neighbor_pixel).or_insert(0) += 1;
-            }
+    for_each_neighbor(img, x, y, |p| {
+        if let Some(entry) = counts[..len].iter_mut().find(|(c, _)| *c == p) {
+            entry.1 += 1;
+        } else {
+            counts[len] = (p, 1);
+            len += 1;
         }
-    }
+    });
 
-    counts
-        .into_iter()
-        .max_by_key(|&(_, count)| count)
-        .map(|(c, _)| c)
+    counts[..len]
+        .iter()
+        .max_by_key(|(_, n)| *n)
+        .map(|(c, _)| *c)
         .unwrap_or_else(|| *img.get_pixel(x, y))
 }
 
@@ -225,7 +213,7 @@ fn get_neighbors(img: &image::RgbaImage, x: u32, y: u32) -> Option<[&Rgba<u8>; 8
 #[cfg(test)]
 mod tests {
     use super::*;
-    use image::{GenericImageView, ImageBuffer, Rgba};
+    use image::{ImageBuffer, Rgba};
 
     fn create_test_img(pixels: Vec<Vec<[u8; 4]>>) -> DynamicImage {
         let height = pixels.len() as u32;
@@ -248,8 +236,7 @@ mod tests {
             vec![white, black, white],
             vec![white, white, white],
         ]);
-        let result = remove_orphan_pixels(img).unwrap().into_rgba8();
-        // The middle black pixel should be replaced by white
+        let result = remove_orphan_pixels(img).into_rgba8();
         assert_eq!(result.get_pixel(1, 1).0, white);
     }
 
@@ -259,14 +246,11 @@ mod tests {
         let black = [0, 0, 0, 255];
         let img = create_test_img(vec![vec![white, black], vec![black, white]]);
 
-        // Scale by 2x
         let result = upscale(img, 2).into_rgba8();
 
         assert_eq!(result.dimensions(), (4, 4));
-        // Check top-left 2x2 block (should be all white)
         assert_eq!(result.get_pixel(0, 0).0, white);
         assert_eq!(result.get_pixel(1, 1).0, white);
-        // Check top-right 2x2 block (should be all black)
         assert_eq!(result.get_pixel(2, 0).0, black);
         assert_eq!(result.get_pixel(3, 1).0, black);
     }
@@ -281,7 +265,7 @@ mod tests {
             vec![white, gray, white], // sandwiched horizontally
             vec![white, black, white],
         ]);
-        let result = remove_anti_aliasing(img).unwrap().into_rgba8();
+        let result = remove_anti_aliasing(img).into_rgba8();
         assert_eq!(result.get_pixel(1, 1).0, white);
     }
 
@@ -295,8 +279,7 @@ mod tests {
             vec![transparent, red, transparent],
             vec![transparent, transparent, transparent],
         ]);
-        let result = add_outlines(img).unwrap().into_rgba8();
-        // The red pixel (1,1) should stay red, but neighbors should become black
+        let result = add_outlines(img).into_rgba8();
         assert_eq!(result.get_pixel(1, 1).0, red);
         assert_eq!(result.get_pixel(1, 0).0, black);
         assert_eq!(result.get_pixel(0, 1).0, black);
@@ -317,7 +300,7 @@ mod tests {
             vec![b, w, b, b],
             vec![b, b, b, b],
         ]);
-        let result = apply_pixel_perfection(img).unwrap().into_rgba8();
+        let result = apply_pixel_perfection(img).into_rgba8();
         assert_eq!(result.get_pixel(1, 1).0, b);
     }
 
@@ -327,8 +310,12 @@ mod tests {
             vec![[255, 0, 0, 255], [0, 255, 0, 255]],
             vec![[0, 0, 255, 255], [255, 255, 0, 255]],
         ]);
-        let result = upscale(img, 1);
+        let result = upscale(img, 1).into_rgba8();
         assert_eq!(result.dimensions(), (2, 2));
+        assert_eq!(result.get_pixel(0, 0).0, [255, 0, 0, 255]);
+        assert_eq!(result.get_pixel(1, 0).0, [0, 255, 0, 255]);
+        assert_eq!(result.get_pixel(0, 1).0, [0, 0, 255, 255]);
+        assert_eq!(result.get_pixel(1, 1).0, [255, 255, 0, 255]);
     }
 
     #[test]
@@ -342,9 +329,17 @@ mod tests {
             vec![t, w, w, w, t],
             vec![t, t, t, t, t],
         ]);
-        let result = postprocess(img, &MosaicMode::Sharp);
-        assert!(result.is_ok());
-        assert_eq!(result.unwrap().dimensions(), (5, 5));
+        let result = postprocess(img, &MosaicMode::Sharp).unwrap().into_rgba8();
+        // Corner pixels are not 4-connected to any opaque pixel, so no outline is drawn
+        assert_eq!(result.get_pixel(0, 0).0, [0, 0, 0, 0]);
+        // Transparent pixels directly adjacent to the white block become black outlines
+        assert_eq!(result.get_pixel(2, 0).0, [0, 0, 0, 255]);
+        assert_eq!(result.get_pixel(0, 2).0, [0, 0, 0, 255]);
+        // The center of the white block is untouched by any pipeline step
+        assert_eq!(result.get_pixel(2, 2).0, [255, 255, 255, 255]);
+        // After outlining, (ur) and (dl) of each white corner become black, forming a matching
+        // diagonal pair that remove_anti_aliasing detects — white corners are eroded to black
+        assert_eq!(result.get_pixel(1, 1).0, [0, 0, 0, 255]);
     }
 
     #[test]
@@ -352,14 +347,14 @@ mod tests {
         let w = [255, 255, 255, 255];
         let b = [0, 0, 0, 255];
         let g = [128, 128, 128, 255];
-        let img = create_test_img(vec![
-            vec![w, b, w],
-            vec![b, g, b],
-            vec![w, b, w],
-        ]);
-        let result = postprocess(img, &MosaicMode::Smooth);
-        assert!(result.is_ok());
-        assert_eq!(result.unwrap().dimensions(), (3, 3));
+        let img = create_test_img(vec![vec![w, b, w], vec![b, g, b], vec![w, b, w]]);
+        let result = postprocess(img, &MosaicMode::Smooth).unwrap().into_rgba8();
+        // The gray pixel at (1,1) has black on both its left and right sides;
+        // remove_anti_aliasing detects this matching pair and replaces gray with black
+        assert_eq!(result.get_pixel(1, 1).0, b);
+        // Border pixels lie outside the apply_filter window and must not be modified
+        assert_eq!(result.get_pixel(0, 0).0, w);
+        assert_eq!(result.get_pixel(1, 0).0, b);
     }
 
     #[test]
@@ -371,7 +366,7 @@ mod tests {
             vec![red, red, red],
             vec![red, red, red],
         ]);
-        let result = remove_orphan_pixels(img).unwrap().into_rgba8();
+        let result = remove_orphan_pixels(img).into_rgba8();
         assert_eq!(result.get_pixel(1, 1).0, red);
     }
 
@@ -384,7 +379,7 @@ mod tests {
             vec![red, red, red],
             vec![red, red, red],
         ]);
-        let result = add_outlines(img).unwrap().into_rgba8();
+        let result = add_outlines(img).into_rgba8();
         for pixel in result.pixels() {
             assert_eq!(pixel.0, red);
         }
