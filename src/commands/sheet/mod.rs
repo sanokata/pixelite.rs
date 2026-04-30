@@ -56,11 +56,10 @@ fn resolve_cell_size(images: &[(PathBuf, DynamicImage)], padding: bool) -> Resul
         .iter()
         .map(|(p, img)| (p.clone(), img.width(), img.height()))
         .collect();
-    if !padding {
-        if let Some(err) = check_uniform_size(&sizes) {
+    if !padding
+        && let Some(err) = check_uniform_size(&sizes) {
             return Err(err.into());
         }
-    }
     let w = sizes.iter().map(|(_, w, _)| *w).max().unwrap();
     let h = sizes.iter().map(|(_, _, h)| *h).max().unwrap();
     Ok((w, h))
@@ -73,7 +72,7 @@ fn build_canvas(
     cols: u32,
 ) -> ImageBuffer<Rgba<u8>, Vec<u8>> {
     let n = images.len() as u32;
-    let rows = (n + cols - 1) / cols;
+    let rows = n.div_ceil(cols);
     let mut canvas = ImageBuffer::<Rgba<u8>, _>::new(cols * cell_w, rows * cell_h);
     for (i, (_, img)) in images.into_iter().enumerate() {
         let x = ((i as u32) % cols) * cell_w;
@@ -84,11 +83,10 @@ fn build_canvas(
 }
 
 fn save_image(img: DynamicImage, output: &Path) -> Result<()> {
-    if let Some(parent) = output.parent() {
-        if !parent.as_os_str().is_empty() {
+    if let Some(parent) = output.parent()
+        && !parent.as_os_str().is_empty() {
             std::fs::create_dir_all(parent)?;
         }
-    }
     let format = ImageFormat::from_path(output).unwrap_or(ImageFormat::Png);
     img.save_with_format(output, format)?;
     Ok(())

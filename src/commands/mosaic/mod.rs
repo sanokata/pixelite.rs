@@ -97,17 +97,16 @@ fn process_single(input: &Path, output: &Path, args: &MosaicArgs) -> Result<()> 
     let resized = processing::resize_to_max_long_side(prepared, args.size, &args.mode)?;
     // 3. quantize the colors of the resized image to the desired number of colors
     let quantized =
-        processing::quantize_colors(resized, args.colors, args.mode.clone(), args.dither.clone())?;
+        processing::quantize_colors(resized, args.colors, args.mode.clone(), args.dither)?;
     // 4. postprocess the quantized image
     let postprocessed = postprocessing::postprocess(quantized, &args.mode)?;
     // 5. upscale the result if requested
     let final_image = postprocessing::upscale(postprocessed, args.scale);
     // 6. save the postprocessed image to the output file
-    if let Some(parent) = output.parent() {
-        if !parent.as_os_str().is_empty() {
+    if let Some(parent) = output.parent()
+        && !parent.as_os_str().is_empty() {
             std::fs::create_dir_all(parent)?;
         }
-    }
     let format = ImageFormat::from_path(output).unwrap_or(ImageFormat::Png);
     final_image.save_with_format(output, format)?;
     Ok(())
