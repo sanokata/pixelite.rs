@@ -12,7 +12,9 @@
   - `sharp`: 輪郭を鮮明に保ち、透過処理を適切に扱うためのモード。孤立点の除去・L 字補正 (ピクセルパーフェクト)・縁取りなどの後処理を適用します。
   - `smooth`: グラデーションを滑らかに保つためのモード。Floyd-Steinberg ディザリングとガウスぼかしを用いた自然な減色を行います。
 - **ディザリング制御**: `--dither` オプションでモードのデフォルトを上書き（`none` / `floyd-steinberg` / `ordered`）。
+- **バッチ処理**: `--input` に複数ファイルやグロブパターンを指定し、`--output` の `{stem}`・`{name}`・`{n}` プレースホルダーでバッチ変換できます。
 - **パレット管理** (`palette` コマンド): 画像から最適なカラーパレットを抽出したり、既存のパレットを別の画像に適用したりできます。
+- **スプライトシート作成** (`sheet` コマンド): 複数の画像を自動グリッドレイアウトで1枚のスプライトシートにまとめます。
 - **スマートクロップ**: 処理前に画像の中央を正方形に自動で切り抜く機能。
 - **高度な色量子化**: KMeans 法による最適なパレット選定と、Rec. 709 重み付けに基づいた輝度計算。
 
@@ -45,6 +47,12 @@ pixelite mosaic -i background.jpg -o bg_pixel.png -s 128 -m smooth -S 4
 
 # sharp モードで ordered ディザリングを使用（モードのデフォルトを上書き）
 pixelite mosaic -i sprite.png -o sprite_pixel.png -m sharp --dither ordered
+
+# バッチ: ディレクトリ内の全 PNG をグロブパターンで変換
+pixelite mosaic -i "sprites/*.png" -o "out/{stem}_pixel.png"
+
+# バッチ: 複数ファイルを連番で出力
+pixelite mosaic -i "frames/*.png" -o "out/{n}.png"
 ```
 
 #### オプション一覧
@@ -53,8 +61,8 @@ pixelite mosaic -i sprite.png -o sprite_pixel.png -m sharp --dither ordered
 
 | オプション | 短縮形 | デフォルト | 説明 |
 | :--- | :--- | :--- | :--- |
-| `--input` | `-i` | (必須) | 入力画像のパス |
-| `--output` | `-o` | (必須) | 出力画像のパス（PNG 推奨） |
+| `--input` | `-i` | (必須) | 入力画像のパスまたはグロブパターン。繰り返し指定可能。 |
+| `--output` | `-o` | (必須) | 出力パスまたはパターン。バッチ出力に `{stem}`・`{name}`・`{n}` を使用可能。 |
 | `--size` | `-s` | `64` | 長辺の解像度（ドット数） |
 | `--colors` | `-c` | `16` | 使用する最大色数 |
 | `--mode` | `-m` | `sharp` | 処理モード（`sharp` または `smooth`） |
@@ -62,6 +70,14 @@ pixelite mosaic -i sprite.png -o sprite_pixel.png -m sharp --dither ordered
 | `--crop` | | `false` | 処理前に画像の中央を正方形にクロップするか |
 | `--scale` | `-S` | `1` | エクスポート倍率（1ドットあたりのピクセル数） |
 | `--verbose` | `-v` | `false` | 詳細なログを表示（グローバルオプション） |
+
+**出力パターンのプレースホルダー:**
+
+| プレースホルダー | 説明 |
+| :--- | :--- |
+| `{stem}` | 拡張子なしのファイル名（例: `hero.png` → `hero`） |
+| `{name}` | 拡張子ありのファイル名（例: `hero.png`） |
+| `{n}` | 入力リスト内の 1 始まりのインデックス |
 
 ---
 
@@ -102,6 +118,32 @@ pixelite palette apply -i photo.jpg -p palette.png -o result.png --method ordere
 | `--palette` | `-p` | (必須) | パレットファイルのパス（`.png` または `.gpl`） |
 | `--output` | `-o` | (必須) | 出力画像のパス |
 | `--method` | `-m` | `none` | ディザリング方式（`none` / `floyd-steinberg` / `ordered`） |
+
+---
+
+### `sheet` — 画像をスプライトシートにまとめる
+
+```bash
+# ディレクトリ内の全 PNG をスプライトシートにまとめる
+pixelite sheet -i "sprites/*.png" -o spritesheet.png
+
+# 列数を明示的に指定する
+pixelite sheet -i "frames/*.png" -o sheet.png --columns 4
+
+# サイズの異なる画像を透過でパディングして許容する
+pixelite sheet -i "sprites/*.png" -o sheet.png --padding
+```
+
+| オプション | 短縮形 | デフォルト | 説明 |
+| :--- | :--- | :--- | :--- |
+| `--input` | `-i` | (必須) | 入力画像のパスまたはグロブパターン。繰り返し指定可能。 |
+| `--output` | `-o` | (必須) | 出力スプライトシートのファイルパス |
+| `--columns` | `-c` | `ceil(√N)` | グリッドの列数 |
+| `--padding` | | `false` | 最大サイズに満たない画像を透過でパディングして許容する |
+
+グリッドレイアウトは `--columns` が指定されない限り、最も正方形に近い配置を自動決定します。サイズの異なる画像が含まれている場合、全ファイルとそのサイズを列挙してエラーで終了します。`--padding` を指定することでサイズ混在を許容できます。
+
+---
 
 ## 開発
 

@@ -14,7 +14,9 @@ It provides optimized image processing pipelines for various use cases, such as 
   - `sharp`: Designed to keep outlines sharp and handle transparency correctly. Applies post-processing such as orphan pixel removal, L-shape correction (pixel perfection), and outlining.
   - `smooth`: Designed to maintain smooth gradients. Performs natural color reduction using Floyd-Steinberg dithering and Gaussian blur.
 - **Dithering Control**: Override the mode-default dithering method with `--dither` (`none`, `floyd-steinberg`, `ordered`).
+- **Batch Processing**: Pass multiple files or glob patterns to `--input` and use `{stem}`, `{name}`, `{n}` placeholders in `--output` for batch conversion.
 - **Palette Management** (`palette` command): Extract optimal color palettes from images or apply existing palettes to new images.
+- **Spritesheet Assembly** (`sheet` command): Combine multiple images into a single spritesheet with automatic grid layout.
 - **Smart Crop**: Automatically crops the center of the image into a square before processing.
 - **Advanced Color Quantization**: Optimal palette selection using the KMeans algorithm and luminance calculation based on Rec. 709 weights.
 
@@ -47,6 +49,12 @@ pixelite mosaic -i background.jpg -o bg_pixel.png -s 128 -m smooth -S 4
 
 # Sharp mode with ordered dithering (overrides mode default)
 pixelite mosaic -i sprite.png -o sprite_pixel.png -m sharp --dither ordered
+
+# Batch: convert all PNGs in a directory using glob pattern
+pixelite mosaic -i "sprites/*.png" -o "out/{stem}_pixel.png"
+
+# Batch: convert multiple files and number the outputs
+pixelite mosaic -i "frames/*.png" -o "out/{n}.png"
 ```
 
 #### Options
@@ -55,8 +63,8 @@ Run `pixelite mosaic --help` for full details.
 
 | Option | Short | Default | Description |
 | :--- | :--- | :--- | :--- |
-| `--input` | `-i` | (Required) | Path to the input image |
-| `--output` | `-o` | (Required) | Path to the output image (PNG recommended) |
+| `--input` | `-i` | (Required) | Input image path(s) or glob pattern(s). Repeat for multiple patterns. |
+| `--output` | `-o` | (Required) | Output path or pattern. Supports `{stem}`, `{name}`, `{n}` for batch output. |
 | `--size` | `-s` | `64` | Resolution of the longest side (pixels) |
 | `--colors` | `-c` | `16` | Maximum number of colors to use |
 | `--mode` | `-m` | `sharp` | Processing mode (`sharp` or `smooth`) |
@@ -64,6 +72,14 @@ Run `pixelite mosaic --help` for full details.
 | `--crop` | | `false` | Crop the center of the image into a square before processing |
 | `--scale` | `-S` | `1` | Output scale factor (multiplies physical pixel size per dot) |
 | `--verbose` | `-v` | `false` | Show detailed logs (global option) |
+
+**Output pattern placeholders:**
+
+| Placeholder | Description |
+| :--- | :--- |
+| `{stem}` | Input filename without extension (e.g. `hero` from `hero.png`) |
+| `{name}` | Input filename with extension (e.g. `hero.png`) |
+| `{n}` | 1-based index of the file in the input list |
 
 ---
 
@@ -104,6 +120,32 @@ pixelite palette apply -i photo.jpg -p palette.png -o result.png --method ordere
 | `--palette` | `-p` | (Required) | Palette file path (`.png` or `.gpl`) |
 | `--output` | `-o` | (Required) | Path to the output image |
 | `--method` | `-m` | `none` | Dithering method (`none`, `floyd-steinberg`, `ordered`) |
+
+---
+
+### `sheet` — Assemble Images into a Spritesheet
+
+```bash
+# Assemble all PNGs in a directory into a spritesheet
+pixelite sheet -i "sprites/*.png" -o spritesheet.png
+
+# Specify the number of columns explicitly
+pixelite sheet -i "frames/*.png" -o sheet.png --columns 4
+
+# Allow images of different sizes by padding smaller ones with transparency
+pixelite sheet -i "sprites/*.png" -o sheet.png --padding
+```
+
+| Option | Short | Default | Description |
+| :--- | :--- | :--- | :--- |
+| `--input` | `-i` | (Required) | Input image path(s) or glob pattern(s). Repeat for multiple patterns. |
+| `--output` | `-o` | (Required) | Output spritesheet image file path |
+| `--columns` | `-c` | `ceil(√N)` | Number of columns in the grid |
+| `--padding` | | `false` | Pad images smaller than the largest to the same cell size using transparency |
+
+The grid layout is determined automatically as the most square arrangement unless `--columns` is specified. If images have different sizes, the command exits with an error listing every file and its dimensions — use `--padding` to allow mixed sizes.
+
+---
 
 ## Development
 
